@@ -33,9 +33,9 @@ import (
 // every miner restarting at once. A new version that doesn't come back
 // connected is rolled back and skipped.
 //
-// A download is checked against the sha256 digest the release lists for it.
-// Releases are not signed yet; when urnetwork/build publishes signed
-// checksums, they are checked here first.
+// A download is checked against the sha256 digest the release lists for it,
+// and, once a release key is pinned, against the release's signed
+// SHA256SUMS (cli_signature.go). A test feed is not checked for a signature.
 
 const minerUpdateFileName = "miner-update.json"
 const minerUpdateDefaultSource = "https://api.github.com/repos/urnetwork/build/releases/latest"
@@ -336,6 +336,12 @@ func installMinerRelease(ctx context.Context, release *minerRelease, executable 
 	if !ok || len(want) != 64 {
 		return fmt.Errorf("release %s lists no sha256 digest for %s, so it can't be checked", release.TagName, asset.Name)
 	}
+	want = strings.ToLower(want)
+	if _, test := minerUpdateSource(); !test {
+		if err := verifyMinerReleaseSignature(ctx, release, asset, want); err != nil {
+			return err
+		}
+	}
 	dir := filepath.Dir(executable)
 	// a fresh name each time (O_EXCL), so nothing planted there is followed;
 	// Windows runs only a name that ends in .exe
@@ -380,7 +386,7 @@ func installMinerRelease(ctx context.Context, release *minerRelease, executable 
 	if extractErr != nil {
 		return extractErr
 	}
-	if got := hex.EncodeToString(hash.Sum(nil)); got != strings.ToLower(want) {
+	if got := hex.EncodeToString(hash.Sum(nil)); got != want {
 		return fmt.Errorf("the download of %s doesn't match its sha256 digest; nothing was changed", asset.Name)
 	}
 	if !found {
