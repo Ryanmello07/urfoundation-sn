@@ -356,5 +356,5 @@ func (self *windowsInstaller) install(string, string, io.Writer) error {
 }
 
 func (self *windowsInstaller) uninstall(io.Writer) error {
-	return errors.New("the URnetwork installer's miner is removed with: urnet-tools uninstall")
+	return errors.New("the URnetwork installer's miner is removed with urnet-tools uninstall; older installers also delete ~/.urnetwork with it, so to keep your identity turn it off with urnet-tools auto-start off; urnet-tools stop")
 }

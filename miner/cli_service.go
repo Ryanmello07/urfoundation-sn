@@ -442,7 +442,7 @@ func (self *systemdService) label() string { return self.name }
 func (self *systemdService) unit() string { return self.name + ".service" }
 
 func (self *systemdService) switchHint() string {
-	return "This device already runs the miner with the URnetwork installer (urnetwork.service).\n  Keep using it: provider service start, stop, status and logs work on it.\n  To switch to this command's service, turn the installer's off first (your identity is kept):\n  systemctl --user disable --now urnetwork.service urnetwork-update.timer\n  Don't use urnet-tools uninstall for this: it also deletes ~/.urnetwork."
+	return "This device already runs the miner with the URnetwork installer (urnetwork.service).\n  Keep using it: provider service start, stop, status and logs work on it.\n  To switch to this command's service, turn the installer's off first (your identity is kept):\n  systemctl --user disable --now urnetwork.service urnetwork-update.timer\n  Don't use urnet-tools uninstall for this: older installers delete ~/.urnetwork with it."
 }
 
 func (self *systemdService) stopHint() string {
