@@ -177,10 +177,14 @@ func setupCmd(opts docopt.Opts, stdout io.Writer, stderr io.Writer) int {
 		run.note("Start it by hand with: provider start")
 	} else if manager.installed() {
 		run.ok("The background service is already installed")
-		if !manager.active() {
-			_ = manager.control("start")
+		if problem := otherMinerProblem(manager); problem != "" {
+			run.warn(firstLine(problem))
+		} else {
+			if !manager.active() {
+				_ = manager.control("start")
+			}
+			reportServiceStart(stdout, 20*time.Second)
 		}
-		reportServiceStart(stdout, 20*time.Second)
 	} else if other := installerService(manager); other != nil && other.enabled() {
 		run.ok("The URnetwork installer's " + other.name + ".service runs the miner on this device")
 		if !other.active() {

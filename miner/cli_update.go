@@ -567,6 +567,10 @@ func minerUpdateAccessProblem(executable string, binary bool) string {
 func updateCmd(opts docopt.Opts, stdout io.Writer, stderr io.Writer) int {
 	executable, executableErr := minerUpdateTarget()
 	if executableErr == nil {
+		if problem := rootUpdateProblem(executable); problem != "" {
+			writeCliError(stderr, "Not run as root: "+problem+"\n  Root would run or replace files another user can change. Run it without sudo, as the user who owns that miner.")
+			return 1
+		}
 		if installer := findMinerInstaller(executable); installer != nil {
 			return installerUpdateCmd(opts, installer, stdout, stderr)
 		}
