@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -192,7 +193,11 @@ func (self *startTerminalUi) watch() {
 				self.check(true, "Reconnected", detail)
 			} else {
 				self.check(true, "Connected", detail+cliDim(self.out, fmt.Sprintf("  %.0fs", time.Since(self.startedAt).Seconds())))
-				fmt.Fprintf(self.out, "\n%s Leave this open, or run it in the background:\n  provider service install\n%s\n", cliGreen(self.out, "● Mining."), cliDim(self.out, "Press Ctrl-C to stop."))
+				if runtime.GOOS == "windows" {
+					fmt.Fprintf(self.out, "\n%s Leave this window open.\n%s\n", cliGreen(self.out, "● Mining."), cliDim(self.out, "Press Ctrl-C to stop."))
+				} else {
+					fmt.Fprintf(self.out, "\n%s Leave this open, or run it in the background:\n  provider service install\n%s\n", cliGreen(self.out, "● Mining."), cliDim(self.out, "Press Ctrl-C to stop."))
+				}
 			}
 			self.everDone = true
 		case !connected && self.connected:

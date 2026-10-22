@@ -89,6 +89,10 @@ func setupCmd(opts docopt.Opts, stdout io.Writer, stderr io.Writer) int {
 	yes, _ := opts.Bool("--yes")
 	noService, _ := opts.Bool("--no-service")
 	codeFile, _ := opts.String("--auth-code-file")
+	if system && runtime.GOOS == "windows" {
+		writeCliError(stderr, windowsSystemProblem())
+		return 1
+	}
 	if system {
 		if os.Geteuid() != 0 {
 			writeCliError(stderr, "Setting up a system service needs root. Run it again with sudo:\n  sudo "+strings.Join(append([]string{"provider"}, os.Args[1:]...), " "))
