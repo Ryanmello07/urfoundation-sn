@@ -33,9 +33,9 @@ import (
 // every miner restarting at once. A new version that doesn't come back
 // connected is rolled back and skipped.
 //
-// A download is checked against the sha256 digest the release lists for it.
-// Releases are not signed yet; when urnetwork/build publishes signed
-// checksums, they are checked here first.
+// A download is checked against the sha256 digest the release lists for it,
+// and that digest against the release attestation GitHub signed when the
+// release was published (cli_attestation.go). A test feed is not attested.
 
 const minerUpdateFileName = "miner-update.json"
 const minerUpdateDefaultSource = "https://api.github.com/repos/urnetwork/build/releases/latest"
@@ -336,6 +336,12 @@ func installMinerRelease(ctx context.Context, release *minerRelease, executable 
 	if !ok || len(want) != 64 {
 		return fmt.Errorf("release %s lists no sha256 digest for %s, so it can't be checked", release.TagName, asset.Name)
 	}
+	want = strings.ToLower(want)
+	if _, test := minerUpdateSource(); !test {
+		if err := verifyMinerReleaseAttestation(ctx, release, asset, want); err != nil {
+			return err
+		}
+	}
 	dir := filepath.Dir(executable)
 	// a fresh name each time (O_EXCL), so nothing planted there is followed;
 	// Windows runs only a name that ends in .exe
@@ -380,7 +386,7 @@ func installMinerRelease(ctx context.Context, release *minerRelease, executable 
 	if extractErr != nil {
 		return extractErr
 	}
-	if got := hex.EncodeToString(hash.Sum(nil)); got != strings.ToLower(want) {
+	if got := hex.EncodeToString(hash.Sum(nil)); got != want {
 		return fmt.Errorf("the download of %s doesn't match its sha256 digest; nothing was changed", asset.Name)
 	}
 	if !found {
@@ -650,7 +656,7 @@ func applyMinerUpdate(stdout io.Writer, stderr io.Writer, release *minerRelease,
 		writeCliError(stderr, "Not updated: "+firstLine(err.Error()))
 		return 1
 	}
-	fmt.Fprintf(stdout, "  %s Downloaded %s and checked it against the release's sha256 digest\n", cliGreen(stdout, "✓"), release.version())
+	fmt.Fprintf(stdout, "  %s Downloaded %s and checked it against the digest GitHub attested for the release\n", cliGreen(stdout, "✓"), release.version())
 	fmt.Fprintf(stdout, "  %s Installed %s %s\n", cliGreen(stdout, "✓"), executable, cliDim(stdout, "(previous version kept as "+filepath.Base(executable)+".previous)"))
 	now := time.Now().UTC()
 	state.Updated = release.version()
