@@ -54,6 +54,40 @@ var cliCommandHelp = map[string]struct {
 	alias    string
 	examples []string
 }{
+	"setup": {
+		summary: "Set up this device in four steps: sign in, register it as a miner, set the payout\naddress, and start the background service. Safe to run again; finished steps are kept.",
+		examples: []string{
+			"provider setup                                       # asks as it goes",
+			"provider setup --yes --auth-code-file=/run/secrets/ur_code   # no prompts, for fleets",
+			"sudo provider setup --system --yes --auth-code-file=code.txt # a system service",
+		},
+	},
+	"status": {
+		summary: "Show whether the miner on this device is set up, running and connected, one line\neach, and the next command when something isn't. Exit code: 0 all good, 3 needs\nsetup, 4 not running or not connected.",
+		examples: []string{
+			"provider status",
+			"provider status --json     # for scripts and monitoring",
+		},
+	},
+	"doctor": {
+		summary: "Look for why the miner can't sign in or connect: the state folder, DNS, the\nconnection, a TLS-inspecting proxy, the clock, and whether updates can install.",
+	},
+	"service": {
+		summary: "Run the miner in the background and on every boot (systemd on Linux, launchd on\nmacOS), with automatic updates checked every 6 hours. If the URnetwork installer's\nurnetwork.service is already there, start, stop, status and logs work on it.",
+		examples: []string{
+			"provider service install     # start now and on every boot",
+			"provider service logs --follow",
+			"provider service uninstall   # your sign-in and identity are kept",
+		},
+	},
+	"update": {
+		summary: "Update the miner to the newest release. With the background service installed,\nupdates install automatically within a day of a release, and a version that\ndoesn't come back connected is rolled back. Turn that off with provider update\n--off, or set URNETWORK_AUTO_UPDATE=0. A miner the URnetwork installer set up\nkeeps updating through its urnet-tools, and these commands run that.",
+		examples: []string{
+			"provider update            # update now",
+			"provider update --status   # automatic update settings and last check",
+			"provider update --off      # no automatic updates (provider update --on undoes it)",
+		},
+	},
 	"auth": {
 		summary: "Sign this device in to the network. Get an auth code from your URnetwork app or\naccount page; with no code on the command line you are asked to paste it.",
 		alias:   "login",
@@ -64,11 +98,11 @@ var cliCommandHelp = map[string]struct {
 		},
 	},
 	"provide": {
-		summary: "Run the miner in this terminal until it is stopped (Ctrl-C).\nThe very first start on a new device needs --allow-client-registration.",
+		summary: "Run the miner in this terminal until it is stopped (Ctrl-C). On a new device,\nprovider start asks before registering it; provide and scripts need\n--allow-client-registration for that first start.",
 		alias:   "start",
 		examples: []string{
-			"provider start --allow-client-registration   # first start on a new device",
-			"provider start                               # every start after that",
+			"provider start                               # in a terminal: plain progress, logs in miner.log",
+			"provider start --allow-client-registration   # first start without a prompt",
 			"provider start --all-operators               # mine every listed operator",
 		},
 	},
@@ -138,9 +172,16 @@ func cliOverview() string {
 Usage: provider <command> [options]
 
 Get started
+  setup         Set up this device, step by step
   login         Sign this device in with an auth code     (same as auth)
   start         Start mining in this terminal             (same as provide)
   wallet        Set the wallet your rewards are paid to
+
+Check on it
+  status        Is the miner set up, running and connected?
+  doctor        Find out why it can't sign in or connect
+  service       Run it in the background and on every boot
+  update        Update to the newest release
 
 Manage
   operators     List operators and whether you are signed in to each
@@ -156,12 +197,12 @@ Help
   provider --version           Print the version
 
 Examples
-  provider login                                # paste the auth code when asked
-  provider start --allow-client-registration    # first start on a new device
-  provider start                                # every start after that
+  provider setup                 # the easy way: sign in, register, run in the background
+  provider login                 # or by hand: paste the auth code when asked,
+  provider start                 # then start mining in this terminal
 
-State lives in ~/.urnetwork. Docs: https://ur.xyz/docs/miner
-`, version)
+State lives in %s. Docs: https://ur.xyz/docs/miner
+`, version, displayStateDir())
 }
 
 func cliBareVersion() string {
@@ -704,6 +745,12 @@ func cliPanicMessage(args []string, recovered any) string {
 	if 0 < len(args) {
 		command = args[0]
 	}
+	if errors.Is(err, errPromptInterrupted) {
+		return "Cancelled."
+	}
+	if (command == "auth" || command == "login") && (errors.Is(err, io.EOF) || errors.Is(err, errEmptyAuthCode)) && os.Getenv(cliSetupStepEnv) != "" {
+		return "No auth code was entered. Get one from your URnetwork app or account page,\n  then run provider setup again."
+	}
 	if (command == "auth" || command == "login" || command == "auth-provide") && (errors.Is(err, io.EOF) || errors.Is(err, errEmptyAuthCode)) {
 		return "No auth code was entered.\n" +
 			"  Get one from your URnetwork app or account page, then run:\n" +
@@ -746,8 +793,18 @@ func recoverCliPanic(args []string, stderr io.Writer) {
 	if recovered == nil {
 		return
 	}
-	// logs (systemd, docker) keep the full panic, as before
-	if 2 <= cliVerbosity(args) || os.Getenv("PROVIDER_DEBUG") != "" || !cliIsTerminal(stderr) {
+	if stderr == io.Writer(os.Stderr) && cliTerminal != nil {
+		// provider start sent stderr to its log; answer on the terminal
+		stderr = cliTerminal
+	}
+	if err, ok := recovered.(error); ok && errors.Is(err, errPromptInterrupted) {
+		// Ctrl-C at a prompt is no crash
+		fmt.Fprintln(stderr, cliPanicMessage(args, recovered))
+		os.Exit(130)
+	}
+	// logs (systemd, docker) keep the full panic, as before; a step of
+	// provider setup answers in plain words, since setup shows it to a person
+	if 2 <= cliVerbosity(args) || os.Getenv("PROVIDER_DEBUG") != "" || !cliIsTerminal(stderr) && os.Getenv(cliSetupStepEnv) == "" {
 		panic(recovered)
 	}
 	writeCliError(stderr, cliPanicMessage(args, recovered))
