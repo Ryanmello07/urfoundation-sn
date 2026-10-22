@@ -943,12 +943,7 @@ func (self providerRunSettings) run(parent context.Context, writer io.Writer) (r
 		certPem, keyPem, _ := readProviderTlsCertAndKey()
 		extenderKeySeed, _ := readProviderExtenderKeySeed()
 		settings := ProviderDeviceSettings(self.closeReportDomainHash)
-		settings.KeyMaterial = sdk.NewDeviceLocalKeyMaterial(seed, certPem, keyPem)
-		// the extender identity of this provider (connect/EXTENDER.md B1, G2).
-		// The space keeps no local state, so the seed lives here: without it
-		// the role would activate under a new key every launch and the
-		// operator would revoke the old one as fast as it publishes it.
-		settings.KeyMaterial.SetExtenderKeySeed(extenderKeySeed)
+		settings.KeyMaterial = providerDeviceKeyMaterial(seed, certPem, keyPem, extenderKeySeed)
 		applyProviderMemoryTarget(settings, self.memoryPlan.DeviceMemoryTargetByteCount)
 		settings.ProviderDialContextSettings = self.testEgressDialer
 		device, err := newProviderDeviceLocal(
@@ -1135,6 +1130,29 @@ func writeProviderClientKeySeed(seed []byte) error {
 	}
 	return os.WriteFile(p, seed, 0600)
 }
+
+// providerDeviceKeyMaterial is the identity material the provider device is
+// built with. The space keeps no local state, so the extender's keys live in
+// the provider state directory and ride the key material:
+//   - the extender identity seed (connect/EXTENDER.md B1, G2): without it the
+//     role would activate under a new key every launch and the operator would
+//     revoke the old one as fast as it publishes it.
+//   - the file the lag.dev measurement key is kept in (lag.dev/PLAN.md C4),
+//     which the role creates at its first start and asks the operator to
+//     certify. Without it the role serves no measurement name, which left
+//     lag.dev with no extender to offer.
+func providerDeviceKeyMaterial(clientKeySeed []byte, certPem []byte, keyPem []byte, extenderKeySeed []byte) *sdk.DeviceLocalKeyMaterial {
+	keyMaterial := sdk.NewDeviceLocalKeyMaterial(clientKeySeed, certPem, keyPem)
+	keyMaterial.SetExtenderKeySeed(extenderKeySeed)
+	if measurementKeyFile, err := providerStatePath(providerExtenderMeasurementKeyFileName); err == nil {
+		keyMaterial.SetExtenderMeasurementKeyFile(measurementKeyFile)
+	}
+	return keyMaterial
+}
+
+// The provider state file of the extender's lag.dev measurement key: a PEM
+// private key the sdk role writes 0600 when it is absent.
+const providerExtenderMeasurementKeyFileName = ".provider.extender.measurement.key"
 
 // readProviderExtenderKeySeed loads the ed25519 seed of this provider's
 // extender identity from `~/.urnetwork/.provider.extender.key`
