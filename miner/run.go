@@ -73,6 +73,14 @@ A network saved with "provider choose_network" replaces these defaults;
 operator list, by default %[3]s.
 
 Usage:
+    provider setup [--auth-code-file=<path>] [--yes] [--no-service] [--system] [-v...]
+    provider status [--json] [-v...]
+    provider doctor [-v...]
+    provider service install [--system] [-v...]
+    provider service uninstall [--system] [-v...]
+    provider service (start | stop | restart | status) [--system] [-v...]
+    provider service logs [--follow] [--system] [-v...]
+    provider update [--check | --status | --on | --off | --auto] [-v...]
     provider auth ([<auth_code>] | --user_auth=<user_auth> [--password=<password>]) [-f]
     	[--api_url=<api_url>]
     	[--max-memory=<mem>]
@@ -184,6 +192,18 @@ Options:
 	--require-original-contract-capture  Refuse startup without the complete original contract source profile and retained provider identity.
     --durable-volumes=<path>          Exact external storage declaration; fleet writes require the owner-local schema.
     --durable-volumes-sha256=<hash>   Reviewed sha256: digest; claim daemons require the daemon-volume schema.
+    --auth-code-file=<path>          With setup, read the auth code from this file instead of asking.
+    --yes                            With setup, take the default answer to every question (no prompts).
+    --no-service                     With setup, don't install the background service.
+    --system                         With setup and service, a system-wide service run as root, with its
+                                     state in /var/lib/urnetwork. Needs sudo.
+    --json                           With status, print JSON for scripts and monitoring.
+    --follow                         With service logs, keep printing new lines.
+    --check                          With update, only say whether a newer release is out.
+    --status                         With update, show the automatic update settings.
+    --on                             With update, turn automatic updates on (the default).
+    --off                            With update, turn automatic updates off.
+    --auto                           With update, one automatic update check, as the service timer runs it.
     -h --help                        Show this help and exit.
     --version                        Show version.
     -v                               Enable verbose mode. Repeat for higher levels:
@@ -361,6 +381,22 @@ func Run(args []string) {
 		}
 	}
 
+	for _, command := range []struct {
+		name string
+		run  func(docopt.Opts, io.Writer, io.Writer) int
+	}{
+		// service first: its subcommands reuse the words status and start
+		{"service", serviceCmd},
+		{"setup", setupCmd},
+		{"status", func(opts docopt.Opts, stdout io.Writer, _ io.Writer) int { return statusCmd(opts, stdout) }},
+		{"doctor", func(opts docopt.Opts, stdout io.Writer, _ io.Writer) int { return doctorCmd(opts, stdout) }},
+		{"update", updateCmd},
+	} {
+		if chosen, _ := opts.Bool(command.name); chosen {
+			os.Exit(command.run(opts, os.Stdout, os.Stderr))
+		}
+	}
+
 	if proxy, _ := opts.Bool("proxy"); proxy {
 		if auth, _ := opts.Bool("auth"); auth {
 			if add, _ := opts.Bool("add"); add {
@@ -408,7 +444,7 @@ func Run(args []string) {
 		if allOperators, _ := opts.Bool("--all-operators"); allOperators {
 			provideAllOperatorsCmd(opts)
 		} else {
-			provide(opts)
+			provideWith(opts, 0 < len(typed) && typed[0] == "start")
 		}
 	} else if authProvide, _ := opts.Bool("auth-provide"); authProvide {
 		if err := auth(opts); err != nil {
@@ -461,6 +497,13 @@ func auth(opts docopt.Opts) error {
 			return fmt.Errorf("network token was not written: %w", err)
 		}
 		fmt.Printf("Jwt written to %s\n", jwtPath)
+		if cliIsTerminal(os.Stdout) {
+			signIn := readMinerSignIn()
+			if signIn.networkName != "" {
+				fmt.Printf("Signed in to network %q.\n", signIn.networkName)
+			}
+			fmt.Println("Next: provider start")
+		}
 	}
 	return nil
 }
@@ -490,7 +533,7 @@ func terminalLoginPrompts() loginPrompts {
 	return loginPrompts{
 		password: func() (string, error) {
 			fmt.Print("Enter password: ")
-			passwordBytes, err := term.ReadPassword(stdin)
+			passwordBytes, err := readHiddenInterruptible(stdin)
 			if err != nil {
 				return "", err
 			}
@@ -499,7 +542,7 @@ func terminalLoginPrompts() loginPrompts {
 		},
 		authCode: func() (string, error) {
 			return readAuthCode(os.Stdin, os.Stdout, term.IsTerminal(stdin), func() ([]byte, error) {
-				return term.ReadPassword(stdin)
+				return readHiddenInterruptible(stdin)
 			})
 		},
 	}
@@ -595,6 +638,23 @@ func applyProviderMemoryTarget(
 }
 
 func provide(opts docopt.Opts) {
+	provideWith(opts, false)
+}
+
+// provideWith is provide, or provider start when start is set: start asks
+// before registering a new device and, in a terminal, reports in plain lines.
+func provideWith(opts docopt.Opts, start bool) {
+	if !providePreflight(opts, start, os.Stdin, os.Stdout, os.Stderr) {
+		os.Exit(minerExitNeedsSetup)
+	}
+	var ui *startTerminalUi
+	if start && cliIsTerminal(os.Stdout) && cliIsTerminal(os.Stderr) && cliVerbosity(os.Args[1:]) == 0 && os.Getenv("PROVIDER_DEBUG") == "" {
+		ui = newStartTerminalUi(os.Stdout)
+	}
+	var out io.Writer = os.Stdout
+	if ui != nil {
+		out = ui
+	}
 	port, _ := opts.Int("--port")
 
 	apiUrl, err := resolveApiUrl(opts)
@@ -661,7 +721,13 @@ func provide(opts docopt.Opts) {
 	// A complete-profile launch must report refusal to its supervisor, and a
 	// child that set its rejected network sign-in aside says so by its exit
 	// code. The owned run has joined every child before this exit decision.
-	err = settings.run(ctx, os.Stdout)
+	if ui != nil {
+		ui.begin()
+	}
+	err = settings.run(ctx, out)
+	if ui != nil {
+		ui.finish(err, ctx.Err() != nil)
+	}
 	if code, ok := providerRunExitCode(err); ok {
 		stopSignals()
 		os.Exit(code)
@@ -669,6 +735,11 @@ func provide(opts docopt.Opts) {
 	if err != nil && ctx.Err() == nil && (settings.requireWorkCapture || settings.workCapturePath != "" || settings.workCaptureSha256 != "" || settings.requireContractCapture || settings.contractCapturePath != "" || settings.contractCaptureSha256 != "") {
 		stopSignals()
 		fmt.Fprintln(os.Stderr, "provider original capture launch refused; restore approved profiles, retained identity and prepared custody")
+		os.Exit(1)
+	}
+	if start && err != nil && ctx.Err() == nil {
+		// provide has always exited 0 here; start tells a service it failed
+		stopSignals()
 		os.Exit(1)
 	}
 }
@@ -743,6 +814,8 @@ func (self providerRunSettings) run(parent context.Context, writer io.Writer) (r
 		return err
 	}
 	defer progress.close()
+	// provider status reads this; it stops before progress closes
+	defer startMinerStatusFile(ctx, progress)()
 	status, err := newProviderStatusServer(self.port, output, cancel, progress)
 	if err != nil {
 		output.observe(providerStatusFailed, 0, false, err, 0, nil)
