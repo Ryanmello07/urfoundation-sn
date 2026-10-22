@@ -342,6 +342,9 @@ Options:
 // wallet / claim / fleet actions (formerly connect/provider).
 func Run(args []string) {
 	defer recoverCliPanic(args, os.Stderr)
+	if code, done := minerServiceRun(args); done {
+		os.Exit(code)
+	}
 	typed := args
 	args, done, code := cliFront(args, os.Stdout, os.Stderr)
 	if done {
@@ -675,6 +678,9 @@ func provideWith(opts docopt.Opts, start bool) {
 
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer stopSignals()
+	// on Windows, the service's supervisor asks through an inherited event
+	ctx, stopService := minerServiceStopContext(ctx)
+	defer stopService()
 
 	allProxySettings := readProxySettings()
 	providerCount := len(allProxySettings)

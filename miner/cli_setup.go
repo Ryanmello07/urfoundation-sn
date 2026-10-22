@@ -190,13 +190,13 @@ func setupCmd(opts docopt.Opts, stdout io.Writer, stderr io.Writer) int {
 			reportServiceStart(stdout, 20*time.Second)
 		}
 	} else if other := installerService(manager); other != nil && other.enabled() {
-		run.ok("The URnetwork installer's " + other.name + ".service runs the miner on this device")
+		run.ok("The URnetwork installer's " + other.unit() + " runs the miner on this device")
 		if !other.active() {
 			if err := other.control("start"); err != nil {
 				run.warn("It isn't running and didn't start: " + firstLine(err.Error()))
 			}
 		}
-	} else if run.ask("Start the miner now and on every boot?", true) {
+	} else if run.ask("Start the miner now and "+minerServiceWhen()+"?", true) {
 		opts := docopt.Opts{"install": true, "--system": system}
 		if code := serviceCmd(opts, stdout, stderr); code != 0 {
 			fmt.Fprintln(stdout, "\n  Everything else is set up. Start the miner by hand with: provider start")

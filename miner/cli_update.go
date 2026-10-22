@@ -336,12 +336,14 @@ func installMinerRelease(ctx context.Context, release *minerRelease, executable 
 	if !ok || len(want) != 64 {
 		return fmt.Errorf("release %s lists no sha256 digest for %s, so it can't be checked", release.TagName, asset.Name)
 	}
-	if runtime.GOOS == "windows" {
-		return errors.New("updating in place isn't supported on Windows yet; download the new release by hand")
-	}
 	dir := filepath.Dir(executable)
-	// a fresh name each time (O_EXCL), so nothing planted there is followed
-	file, err := os.CreateTemp(dir, "."+filepath.Base(executable)+".new-*")
+	// a fresh name each time (O_EXCL), so nothing planted there is followed;
+	// Windows runs only a name that ends in .exe
+	pattern := "." + filepath.Base(executable) + ".new-*"
+	if runtime.GOOS == "windows" {
+		pattern += ".exe"
+	}
+	file, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return fmt.Errorf("can't write beside %s: %w", executable, err)
 	}
@@ -391,20 +393,7 @@ func installMinerRelease(ctx context.Context, release *minerRelease, executable 
 	if got := strings.TrimSpace(string(versionOut)); got != release.version() {
 		return fmt.Errorf("the new binary says it is %q, not %s; nothing was changed", got, release.version())
 	}
-	// keep the old binary under a second name, then take the binary's name
-	// in one rename: at every moment there is a whole binary at executable
-	previous := executable + ".previous"
-	_ = os.Remove(previous)
-	if err := os.Link(executable, previous); err != nil {
-		if err := copyFile(executable, previous); err != nil {
-			return fmt.Errorf("can't keep the previous version beside %s: %w", executable, err)
-		}
-	}
-	if err := os.Rename(newPath, executable); err != nil {
-		return fmt.Errorf("can't replace %s: %w", executable, err)
-	}
-	syncDir(dir)
-	return nil
+	return replaceMinerBinary(newPath, executable)
 }
 
 func copyFile(from string, to string) error {
@@ -474,15 +463,6 @@ func extractMinerBinary(archive io.Reader, out io.Writer) (bool, error) {
 		}
 		return true, nil
 	}
-}
-
-// rollBackMiner puts executable.previous back.
-func rollBackMiner(executable string) error {
-	previous := executable + ".previous"
-	if _, err := os.Stat(previous); err != nil {
-		return err
-	}
-	return os.Rename(previous, executable)
 }
 
 // minerRunningState is what an update needs to know about the running miner.
@@ -577,7 +557,10 @@ func updateCmd(opts docopt.Opts, stdout io.Writer, stderr io.Writer) int {
 	}
 	if !cliOptBool(opts, "--status") && !cliOptBool(opts, "--check") && !cliOptBool(opts, "--auto") && executableErr == nil {
 		binary := !cliOptBool(opts, "--on") && !cliOptBool(opts, "--off")
-		if problem := minerUpdateAccessProblem(executable, binary); problem != "" && os.Geteuid() != 0 {
+		if problem := minerUpdateAccessProblem(executable, binary); problem != "" && runtime.GOOS == "windows" {
+			writeCliError(stderr, "Can't change this miner's updates: "+problem+".\n  "+minerOwnFolderHint())
+			return 1
+		} else if problem != "" && os.Geteuid() != 0 {
 			writeCliError(stderr, "Can't change this miner's updates: "+problem+".\n  Run it with sudo: sudo "+strings.Join(append([]string{"provider"}, os.Args[1:]...), " "))
 			return 1
 		}
@@ -780,6 +763,8 @@ func printMinerUpdateStatus(stdout io.Writer, state minerUpdateState) {
 	}
 	service := readMinerServiceState()
 	switch {
+	case service.Installed && runtime.GOOS == "windows":
+		row("Checks", "every 6 hours, by "+service.Name)
 	case service.Installed:
 		row("Checks", "every 6 hours, by "+service.Name+"-update")
 	default:

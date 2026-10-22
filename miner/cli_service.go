@@ -21,7 +21,9 @@ import (
 // provider service runs the miner in the background and on every boot, with
 // the system's own service manager: a systemd unit on Linux, a launchd job
 // on macOS. Next to it a timer runs provider update --auto (cli_update.go).
-// It never touches the URnetwork installer's urnetwork.service.
+// Windows has no service manager a standard user may use, so there a Startup
+// folder shortcut starts a supervisor at sign-in (internal/winservice). It
+// never touches the URnetwork installer's urnetwork.service or urnetwork.lnk.
 
 const minerServiceDefaultName = "urnetwork-provider"
 const minerLaunchdLabel = "xyz.ur.provider"
@@ -122,19 +124,55 @@ func minerServiceFor(system bool) (minerServiceManager, error) {
 		return newSystemdService(system), nil
 	case "darwin":
 		return newLaunchdService(system), nil
-	}
-	if runtime.GOOS == "windows" {
-		return nil, errors.New("provider service doesn't run the miner in the background on Windows yet.\n  Leave provider start running in its own PowerShell window; it reconnects by itself.")
+	case "windows":
+		if system {
+			return nil, errors.New(windowsSystemProblem())
+		}
+		return newWindowsService()
 	}
 	return nil, fmt.Errorf("provider service doesn't support %s yet.\n  Run provider start under your system's service manager instead.", runtime.GOOS)
 }
 
 // minerStartHint is how to start a miner that isn't running on this system.
 func minerStartHint() string {
-	if runtime.GOOS == "windows" {
-		return "provider start"
-	}
 	return "provider start, or provider service install"
+}
+
+// minerServiceWhen is when the service starts by itself.
+func minerServiceWhen() string {
+	if runtime.GOOS == "windows" {
+		return "whenever you sign in to Windows"
+	}
+	return "on every boot"
+}
+
+// minerServiceNextStart is when a stopped service starts again.
+func minerServiceNextStart() string {
+	if runtime.GOOS == "windows" {
+		return "the next time you sign in"
+	}
+	return "on the next boot"
+}
+
+// minerOwnFolderHint is where to put a binary updates can replace.
+func minerOwnFolderHint() string {
+	if runtime.GOOS == "windows" {
+		return `Put provider.exe in a folder you own, like %LOCALAPPDATA%\Programs\urnetwork, and install from there.`
+	}
+	return "Put the binary in a folder you own (like ~/.local/bin), or use a system service."
+}
+
+// installerMiner is the URnetwork installer's own background miner, when it
+// mines this state folder: the everyday service commands drive it, and
+// install refuses to start a second miner on the same identity.
+type installerMiner interface {
+	minerServiceManager
+	// label is its name in messages, unit what provider status calls it
+	label() string
+	unit() string
+	enabled() bool
+	// switchHint is why install refuses, and how to switch
+	switchHint() string
 }
 
 // windowsSystemProblem answers --system on Windows, which has no root and no
@@ -171,13 +209,13 @@ func serviceCmd(opts docopt.Opts, stdout io.Writer, stderr io.Writer) int {
 	if !cliOptBool(opts, "install") && !cliOptBool(opts, "uninstall") && !manager.installed() {
 		// start, stop, status and logs also work on the installer's service
 		if other := installerService(manager); other != nil {
-			manager, name, byInstaller = other, other.name, true
+			manager, name, byInstaller = other, other.label(), true
 		}
 	}
 	switch {
 	case cliOptBool(opts, "install"):
 		if other := installerService(manager); other != nil && other.enabled() {
-			writeCliError(stderr, "This device already runs the miner with the URnetwork installer (urnetwork.service).\n  Keep using it: provider service start, stop, status and logs work on it.\n  To switch to this command's service, turn the installer's off first (your identity is kept):\n  systemctl --user disable --now urnetwork.service urnetwork-update.timer\n  Don't use urnet-tools uninstall for this: it also deletes ~/.urnetwork.")
+			writeCliError(stderr, other.switchHint())
 			return 1
 		}
 		if problem := otherMinerProblem(manager); problem != "" {
@@ -214,10 +252,10 @@ func serviceCmd(opts docopt.Opts, stdout io.Writer, stderr io.Writer) int {
 			writeCliError(stderr, "The service wasn't installed: "+err.Error())
 			return 1
 		}
-		fmt.Fprintf(stdout, "  %s Installed %s (%s); it starts now and on every boot\n", cliGreen(stdout, "✓"), name, manager.kind())
+		fmt.Fprintf(stdout, "  %s Installed %s (%s); it starts now and %s\n", cliGreen(stdout, "✓"), name, manager.kind(), minerServiceWhen())
 		fmt.Fprintf(stdout, "  %s Automatic updates: checked every 6 hours\n", cliGreen(stdout, "✓"))
 		if problem := writableDirProblem(filepath.Dir(executable)); problem != "" {
-			fmt.Fprintf(stdout, "  %s But updates can't install: %s.\n    Put the binary in a folder you own (like ~/.local/bin), or use a system service.\n", cliYellow(stdout, "!"), problem)
+			fmt.Fprintf(stdout, "  %s But updates can't install: %s.\n    %s\n", cliYellow(stdout, "!"), problem, minerOwnFolderHint())
 		}
 		if source, test := minerUpdateSource(); test {
 			fmt.Fprintf(stdout, "  %s Updates come from the test feed %s (URNETWORK_UPDATE_URL), not from releases\n", cliYellow(stdout, "!"), source)
@@ -279,9 +317,9 @@ func serviceCmd(opts docopt.Opts, stdout io.Writer, stderr io.Writer) int {
 		}
 		switch {
 		case action == "stop" && byInstaller:
-			fmt.Fprintf(stdout, "  %s Stopped %s. It starts again on the next boot.\n", cliGreen(stdout, "✓"), name)
+			fmt.Fprintf(stdout, "  %s Stopped %s. It starts again %s.\n", cliGreen(stdout, "✓"), name, minerServiceNextStart())
 		case action == "stop":
-			fmt.Fprintf(stdout, "  %s Stopped %s. It starts again on the next boot; provider service uninstall removes it.\n", cliGreen(stdout, "✓"), name)
+			fmt.Fprintf(stdout, "  %s Stopped %s. It starts again %s; provider service uninstall removes it.\n", cliGreen(stdout, "✓"), name, minerServiceNextStart())
 		case byInstaller:
 			// the installer's miner may be a release that doesn't report in
 			fmt.Fprintf(stdout, "  %s %sed %s. Check on it with: provider status\n", cliGreen(stdout, "✓"), strings.ToUpper(action[:1])+action[1:], name)
@@ -369,11 +407,14 @@ func (self *systemdService) active() bool {
 	return out == "active"
 }
 
-// installerService is the URnetwork installer's urnetwork.service, when the
-// manager found one mining this state folder, so the everyday service
-// commands can drive it. A test install with its own state folder is a
-// separate miner and gets its own service.
-func installerService(manager minerServiceManager) *systemdService {
+// installerService is the URnetwork installer's urnetwork.service (on
+// Windows its urnetwork.lnk), when the manager found one mining this state
+// folder, so the everyday service commands can drive it. A test install with
+// its own state folder is a separate miner and gets its own service.
+func installerService(manager minerServiceManager) installerMiner {
+	if other := platformInstallerService(manager); other != nil {
+		return other
+	}
 	systemd, ok := manager.(*systemdService)
 	if !ok || systemd.foreign() == "" {
 		return nil
@@ -392,6 +433,14 @@ func installerService(manager minerServiceManager) *systemdService {
 		return nil
 	}
 	return &other
+}
+
+func (self *systemdService) label() string { return self.name }
+
+func (self *systemdService) unit() string { return self.name + ".service" }
+
+func (self *systemdService) switchHint() string {
+	return "This device already runs the miner with the URnetwork installer (urnetwork.service).\n  Keep using it: provider service start, stop, status and logs work on it.\n  To switch to this command's service, turn the installer's off first (your identity is kept):\n  systemctl --user disable --now urnetwork.service urnetwork-update.timer\n  Don't use urnet-tools uninstall for this: it also deletes ~/.urnetwork."
 }
 
 func (self *systemdService) enabled() bool {
@@ -824,7 +873,7 @@ func readMinerServiceState() minerServiceState {
 			return minerServiceState{Installed: true, Active: manager.active(), Name: minerServiceName(), Kind: manager.kind()}
 		}
 		if other := installerService(manager); other != nil {
-			return minerServiceState{Foreign: other.name + ".service", Active: other.active()}
+			return minerServiceState{Foreign: other.unit(), Active: other.active()}
 		}
 	}
 	return minerServiceState{}
