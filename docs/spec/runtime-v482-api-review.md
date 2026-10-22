@@ -32,3 +32,19 @@ Runtime482 also changes miner payout allocation, Null-epoch scheduling, coldkey
 swap reservations, proxy handling and new-subnet emission defaults. Those
 changes still require broader review, captured-Wasm execution and the applicable
 source-bound rehearsals before operational approval.
+
+The rehearsal build entrypoint now pins v482 at the exact commit/tree above,
+retains metadata-hash/fast-runtime features, and verifies a217-path source
+manifest containing every predecessor entry plus six additional changed paths.
+Four deterministic controls execute the actual script through its pre-build
+checks: exact candidate reaches only a Cargo sentinel; old481 tag/tree, wrong
+spec and changed source bytes are refused before Cargo. No482 native-node build
+or full rehearsal result is established by these controls.
+
+The exact captured482 Wasm was also executed with networking disabled on the
+previously built481 native host. Code hash, full version/API reply and metadata
+bytes matched the capture. Both owned commands joined zero and closed; all20
+raw evidence files (12,204,606 bytes) were independently rehashed. This proves
+local captured-Wasm interface identity, not economic equivalence or a482 native
+build. Evidence is retained in `runtime482-wasm-interface-v1` in the deployment
+workspace. No native-owner source capability has been added.
