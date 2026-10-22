@@ -300,6 +300,10 @@ func (self *windowsInstaller) switchHint() string {
 	return "This PC already runs the miner with the URnetwork installer (urnetwork.lnk in your Startup folder).\n  Keep using it: provider service start, stop, status and logs work on it, and urnet-tools updates it.\n  To switch to this command's service, turn the installer's off first (your identity is kept):\n  urnet-tools auto-start off; urnet-tools stop"
 }
 
+func (self *windowsInstaller) stopHint() string {
+	return "urnet-tools auto-start off; urnet-tools stop"
+}
+
 func (self *windowsInstaller) configured() (string, string) {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(filepath.Dir(self.installer.tools), "urnetwork.exe"), filepath.Join(home, ".urnetwork")

@@ -173,6 +173,8 @@ type installerMiner interface {
 	enabled() bool
 	// switchHint is why install refuses, and how to switch
 	switchHint() string
+	// stopHint is how to stop it and keep it from starting again
+	stopHint() string
 }
 
 // windowsSystemProblem answers --system on Windows, which has no root and no
@@ -441,6 +443,10 @@ func (self *systemdService) unit() string { return self.name + ".service" }
 
 func (self *systemdService) switchHint() string {
 	return "This device already runs the miner with the URnetwork installer (urnetwork.service).\n  Keep using it: provider service start, stop, status and logs work on it.\n  To switch to this command's service, turn the installer's off first (your identity is kept):\n  systemctl --user disable --now urnetwork.service urnetwork-update.timer\n  Don't use urnet-tools uninstall for this: it also deletes ~/.urnetwork."
+}
+
+func (self *systemdService) stopHint() string {
+	return "systemctl --user disable --now urnetwork.service urnetwork-update.timer"
 }
 
 func (self *systemdService) enabled() bool {

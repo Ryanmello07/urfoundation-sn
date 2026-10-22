@@ -53,7 +53,7 @@ func otherMinerProblem(manager minerServiceManager) string {
 		return fmt.Sprintf("A miner is already running on this device (process %d) with the same identity.\n  Stop it first (Ctrl-C in its window), then run this again.", status.Pid)
 	}
 	if other := installerService(manager); other != nil && other.active() {
-		return "The URnetwork installer's " + other.name + ".service is running the miner with the same identity.\n  Keep using it, or stop it first: systemctl --user disable --now urnetwork.service urnetwork-update.timer"
+		return "The URnetwork installer's " + other.unit() + " is running the miner with the same identity.\n  Keep using it, or stop it first: " + other.stopHint()
 	}
 	return ""
 }
