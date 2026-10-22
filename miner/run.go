@@ -226,6 +226,8 @@ Options:
                                      chars with an optional 0x prefix) in a private file that is never created here.
                                      The CLI fetches the wallet challenge and signs it, proving the coldkey; refused
                                      unless the seed derives <coldkey_ss58>. The seed never leaves the host.
+                                     With fleet register: the same seed grammar for the fleet coldkey that signs
+                                     register_limit (the hotkey's owner); keep it off the mining hosts.
     --message=<text>                 With --wallet / wallet set: the challenge printed by "provider wallet challenge",
                                      signed elsewhere (a literal \n stands for a newline). Needs --signature.
                                      With wallet hotkey set: the statement "provider wallet hotkey challenge" printed.
@@ -234,14 +236,14 @@ Options:
                                      no trailing newline) or over that text wrapped in <Bytes>...</Bytes> (what a
                                      Polkadot extension signRaw of type "bytes" signs). Without --coldkey_seed_file
                                      or --message/--signature the set is sent unsigned, which the main network refuses.
-                                     With fleet register: the same seed grammar for the fleet coldkey that signs
-                                     register_limit (the hotkey's owner); keep it off the mining hosts.
     --burn_limit_rao=<n>             fleet register: maximum registration burn in rao passed to register_limit;
                                      the runtime rejects a higher live burn. Omitted: the burn observed at the read.
     --fee_limit_rao=<n>              fleet register: maximum native transaction fee in rao, checked with
                                      payment_queryInfo before broadcast [default: 10000000].
     --apply                          fleet register: sign, journal and broadcast. Without it the command is a dry
                                      run that reads the live burn economics and quotes the signed extrinsic.
+	--quarantine-rejected-sign-in        When the network rejects the saved sign-in, set it aside and exit 75 so
+	                                     the --all-operators supervisor signs in again and restarts this provider.
 	--test-egress-source-ip=<source_ip>  Integration-harness-only IPv4 loopback source bound to both
 	                                     platform control and provider exit sockets.
     <coldkey_ss58>                   Subnet claim wallet: an ss58 coldkey address (prefix 42).
@@ -319,12 +321,18 @@ Options:
 // the subnet's provider: it runs the provide/proxy/auth flows plus the on-chain
 // wallet / claim / fleet actions (formerly connect/provider).
 func Run(args []string) {
+	defer recoverCliPanic(args, os.Stderr)
+	typed := args
+	args, done, code := cliFront(args, os.Stdout, os.Stderr)
+	if done {
+		os.Exit(code)
+	}
 	// docopt alone would answer these with the whole usage text
 	if err := operatorArgsError(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	opts, err := docopt.ParseArgs(mainUsage(), args, RequireVersion())
+	opts, err := cliParser(args, typed, os.Stdout, os.Stderr).ParseArgs(mainUsage(), args, RequireVersion())
 
 	if err != nil {
 		panic(err)
