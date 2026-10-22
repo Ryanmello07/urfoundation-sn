@@ -3,10 +3,25 @@
 package miner
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
 )
+
+// privateDirProblem says when other users could change the state folder or
+// it isn't this user's.
+func privateDirProblem(dir string, info os.FileInfo) string {
+	if info.Mode().Perm()&0022 != 0 {
+		return fmt.Sprintf("%s can be changed by other users, so the miner won't keep keys there. Fix: %s", displayStateDir(), privateDirFix(dir))
+	}
+	return ownerProblem(dir, info)
+}
+
+// privateDirFix is the command that makes the state folder private.
+func privateDirFix(dir string) string {
+	return "chmod 700 " + cliShellQuote(dir)
+}
 
 // ownerProblem says when a folder isn't owned by this user.
 func ownerProblem(dir string, info os.FileInfo) string {

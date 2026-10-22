@@ -338,7 +338,7 @@ func doctorCmd(opts docopt.Opts, stdout io.Writer) int {
 	case report.Service.Installed:
 		fail("Miner", "the background service isn't running: provider service start")
 	default:
-		w.row(nil, "Miner", "not running (provider start, or provider service install)")
+		w.row(nil, "Miner", "not running ("+minerStartHint()+")")
 	}
 
 	// updates: can this binary replace itself?
@@ -378,10 +378,7 @@ func stateDirProblem(dir string, info os.FileInfo) string {
 	if !info.IsDir() {
 		return dir + " isn't a folder"
 	}
-	if info.Mode().Perm()&0022 != 0 {
-		return fmt.Sprintf("%s can be changed by other users, so the miner won't keep keys there. Fix: chmod 700 %s", displayStateDir(), cliShellQuote(dir))
-	}
-	return ownerProblem(dir, info)
+	return privateDirProblem(dir, info)
 }
 
 func writableDirProblem(dir string) string {

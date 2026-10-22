@@ -775,7 +775,7 @@ func cliPanicMessage(args []string, recovered any) string {
 		}
 		return fmt.Sprintf("The state folder %s can be changed by other users, so the miner won't keep its keys there.\n"+
 			"  Make it private, then run the command again:\n"+
-			"  chmod 700 %s", dir, cliShellQuote(dir))
+			"  %s", dir, privateDirFix(dir))
 	}
 	return fmt.Sprintf("%v\n  For technical details run the command again with -vv.", recovered)
 }

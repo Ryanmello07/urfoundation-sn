@@ -123,7 +123,24 @@ func minerServiceFor(system bool) (minerServiceManager, error) {
 	case "darwin":
 		return newLaunchdService(system), nil
 	}
+	if runtime.GOOS == "windows" {
+		return nil, errors.New("provider service doesn't run the miner in the background on Windows yet.\n  Leave provider start running in its own PowerShell window; it reconnects by itself.")
+	}
 	return nil, fmt.Errorf("provider service doesn't support %s yet.\n  Run provider start under your system's service manager instead.", runtime.GOOS)
+}
+
+// minerStartHint is how to start a miner that isn't running on this system.
+func minerStartHint() string {
+	if runtime.GOOS == "windows" {
+		return "provider start"
+	}
+	return "provider start, or provider service install"
+}
+
+// windowsSystemProblem answers --system on Windows, which has no root and no
+// system service here.
+func windowsSystemProblem() string {
+	return "There's no system service on Windows. Run it again without --system,\n  in PowerShell as the account that should mine."
 }
 
 // minerServiceStateDir is the state directory the service will use.
@@ -136,6 +153,10 @@ func minerServiceStateDir(system bool) (string, error) {
 
 func serviceCmd(opts docopt.Opts, stdout io.Writer, stderr io.Writer) int {
 	system, _ := opts.Bool("--system")
+	if system && runtime.GOOS == "windows" {
+		writeCliError(stderr, windowsSystemProblem())
+		return 1
+	}
 	if system && os.Geteuid() != 0 {
 		writeCliError(stderr, "A system service needs root. Run it again with sudo:\n  sudo "+strings.Join(append([]string{"provider"}, os.Args[1:]...), " "))
 		return 1
