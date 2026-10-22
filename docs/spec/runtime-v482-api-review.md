@@ -48,3 +48,15 @@ raw evidence files (12,204,606 bytes) were independently rehashed. This proves
 local captured-Wasm interface identity, not economic equivalence or a482 native
 build. Evidence is retained in `runtime482-wasm-interface-v1` in the deployment
 workspace. No native-owner source capability has been added.
+
+## Owner qualification waiver
+
+On2026-10-22 the owner instructed: “I want to skip the qualification entirely.
+Just move forward.” Full release qualification, the482 node build and rehearsal
+battery are waived, not passed. The source capability catalog now admits exactly
+482 source `8cf229f8ef969389d054a4c161b53ffd164a041f`, with the corresponding
+spec binding; other sources and future specs retain their refusals. Added source
+binding regression tests are included but are not represented as run after the
+waiver. Earlier focused API/metadata and captured-Wasm results remain scoped to
+the versions actually executed. Cryptographic artifact/configuration approvals
+and transaction signatures are not fabricated or bypassed by this decision.
