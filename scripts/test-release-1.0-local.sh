@@ -1014,7 +1014,7 @@ if [[ "${RUN_SERVER_DB_TESTS:-0}" == "1" ]]; then
     # The monitor's schema contracts of the published migration suffix, from
     # 794 on, where settlement v2's migrations 821 and 822 are appended, read a
     # real database's catalog.
-    migration_suffix_tests='^Test(MigrationsCurrentSuffix)'
+    migration_suffix_tests='^Test(MigrationsCurrentSuffix|MigrationsDeviceClientVersionPublicationBoundary)'
     go test ./monitor -run "$migration_suffix_tests" -count=1
     go test -race ./monitor -run "$migration_suffix_tests" -count=1
     # Run the complete operator proxy surface. Its real network/DB roots have a

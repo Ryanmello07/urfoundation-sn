@@ -73,6 +73,14 @@ A network saved with "provider choose_network" replaces these defaults;
 operator list, by default %[3]s.
 
 Usage:
+    provider setup [--auth-code-file=<path>] [--yes] [--no-service] [--system] [-v...]
+    provider status [--json] [-v...]
+    provider doctor [-v...]
+    provider service install [--system] [-v...]
+    provider service uninstall [--system] [-v...]
+    provider service (start | stop | restart | status) [--system] [-v...]
+    provider service logs [--follow] [--system] [-v...]
+    provider update [--check | --status | --on | --off | --auto] [-v...]
     provider auth ([<auth_code>] | --user_auth=<user_auth> [--password=<password>]) [-f]
     	[--api_url=<api_url>]
     	[--max-memory=<mem>]
@@ -184,6 +192,18 @@ Options:
 	--require-original-contract-capture  Refuse startup without the complete original contract source profile and retained provider identity.
     --durable-volumes=<path>          Exact external storage declaration; fleet writes require the owner-local schema.
     --durable-volumes-sha256=<hash>   Reviewed sha256: digest; claim daemons require the daemon-volume schema.
+    --auth-code-file=<path>          With setup, read the auth code from this file instead of asking.
+    --yes                            With setup, take the default answer to every question (no prompts).
+    --no-service                     With setup, don't install the background service.
+    --system                         With setup and service, a system-wide service run as root, with its
+                                     state in /var/lib/urnetwork. Needs sudo.
+    --json                           With status, print JSON for scripts and monitoring.
+    --follow                         With service logs, keep printing new lines.
+    --check                          With update, only say whether a newer release is out.
+    --status                         With update, show the automatic update settings.
+    --on                             With update, turn automatic updates on (the default).
+    --off                            With update, turn automatic updates off.
+    --auto                           With update, one automatic update check, as the service timer runs it.
     -h --help                        Show this help and exit.
     --version                        Show version.
     -v                               Enable verbose mode. Repeat for higher levels:
@@ -226,6 +246,8 @@ Options:
                                      chars with an optional 0x prefix) in a private file that is never created here.
                                      The CLI fetches the wallet challenge and signs it, proving the coldkey; refused
                                      unless the seed derives <coldkey_ss58>. The seed never leaves the host.
+                                     With fleet register: the same seed grammar for the fleet coldkey that signs
+                                     register_limit (the hotkey's owner); keep it off the mining hosts.
     --message=<text>                 With --wallet / wallet set: the challenge printed by "provider wallet challenge",
                                      signed elsewhere (a literal \n stands for a newline). Needs --signature.
                                      With wallet hotkey set: the statement "provider wallet hotkey challenge" printed.
@@ -234,14 +256,14 @@ Options:
                                      no trailing newline) or over that text wrapped in <Bytes>...</Bytes> (what a
                                      Polkadot extension signRaw of type "bytes" signs). Without --coldkey_seed_file
                                      or --message/--signature the set is sent unsigned, which the main network refuses.
-                                     With fleet register: the same seed grammar for the fleet coldkey that signs
-                                     register_limit (the hotkey's owner); keep it off the mining hosts.
     --burn_limit_rao=<n>             fleet register: maximum registration burn in rao passed to register_limit;
                                      the runtime rejects a higher live burn. Omitted: the burn observed at the read.
     --fee_limit_rao=<n>              fleet register: maximum native transaction fee in rao, checked with
                                      payment_queryInfo before broadcast [default: 10000000].
     --apply                          fleet register: sign, journal and broadcast. Without it the command is a dry
                                      run that reads the live burn economics and quotes the signed extrinsic.
+	--quarantine-rejected-sign-in        When the network rejects the saved sign-in, set it aside and exit 75 so
+	                                     the --all-operators supervisor signs in again and restarts this provider.
 	--test-egress-source-ip=<source_ip>  Integration-harness-only IPv4 loopback source bound to both
 	                                     platform control and provider exit sockets.
     <coldkey_ss58>                   Subnet claim wallet: an ss58 coldkey address (prefix 42).
@@ -319,12 +341,21 @@ Options:
 // the subnet's provider: it runs the provide/proxy/auth flows plus the on-chain
 // wallet / claim / fleet actions (formerly connect/provider).
 func Run(args []string) {
+	defer recoverCliPanic(args, os.Stderr)
+	if code, done := minerServiceRun(args); done {
+		os.Exit(code)
+	}
+	typed := args
+	args, done, code := cliFront(args, os.Stdout, os.Stderr)
+	if done {
+		os.Exit(code)
+	}
 	// docopt alone would answer these with the whole usage text
 	if err := operatorArgsError(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	opts, err := docopt.ParseArgs(mainUsage(), args, RequireVersion())
+	opts, err := cliParser(args, typed, os.Stdout, os.Stderr).ParseArgs(mainUsage(), args, RequireVersion())
 
 	if err != nil {
 		panic(err)
@@ -350,6 +381,22 @@ func Run(args []string) {
 		if err != nil || contractProfile != nil && allowRegistration {
 			fmt.Fprintln(os.Stderr, "original contract launch requires its approved source profile and retained provider identity; no provider started")
 			os.Exit(1)
+		}
+	}
+
+	for _, command := range []struct {
+		name string
+		run  func(docopt.Opts, io.Writer, io.Writer) int
+	}{
+		// service first: its subcommands reuse the words status and start
+		{"service", serviceCmd},
+		{"setup", setupCmd},
+		{"status", func(opts docopt.Opts, stdout io.Writer, _ io.Writer) int { return statusCmd(opts, stdout) }},
+		{"doctor", func(opts docopt.Opts, stdout io.Writer, _ io.Writer) int { return doctorCmd(opts, stdout) }},
+		{"update", updateCmd},
+	} {
+		if chosen, _ := opts.Bool(command.name); chosen {
+			os.Exit(command.run(opts, os.Stdout, os.Stderr))
 		}
 	}
 
@@ -391,16 +438,22 @@ func Run(args []string) {
 		if _, err := opts.String("--operator"); err == nil {
 			operatorAuthCmd(opts)
 		} else {
-			auth(opts)
+			if err := auth(opts); err != nil {
+				fmt.Printf("%s\n", err)
+				os.Exit(1)
+			}
 		}
 	} else if provide_, _ := opts.Bool("provide"); provide_ {
 		if allOperators, _ := opts.Bool("--all-operators"); allOperators {
 			provideAllOperatorsCmd(opts)
 		} else {
-			provide(opts)
+			provideWith(opts, 0 < len(typed) && typed[0] == "start")
 		}
 	} else if authProvide, _ := opts.Bool("auth-provide"); authProvide {
-		auth(opts)
+		if err := auth(opts); err != nil {
+			fmt.Printf("%s\n", err)
+			os.Exit(1)
+		}
 		provide(opts)
 	} else if chooseNetwork, _ := opts.Bool("choose_network"); chooseNetwork {
 		if err := chooseNetworkCmd(opts); err != nil {
@@ -413,19 +466,20 @@ func Run(args []string) {
 }
 
 // Authentication shares the selected state directory with provider startup and claims.
-func auth(opts docopt.Opts) {
+// A custody refusal is the host's directory, not an invariant: it is returned
+// as a command failure with the store's own actionable message.
+func auth(opts docopt.Opts) error {
 	jwtPath, err := providerStatePath("jwt")
 	if err != nil {
 		panic(err)
 	}
 	if !confirmJwtOverwrite(opts, jwtPath) {
-		return
+		return nil
 	}
 
 	apiUrl, err := resolveApiUrl(opts)
 	if err != nil {
-		fmt.Printf("network config error: %s\n", err)
-		os.Exit(1)
+		return fmt.Errorf("network config error: %s", err)
 	}
 
 	// auth is short lived: only an explicit --max-memory sizes it
@@ -443,10 +497,18 @@ func auth(opts docopt.Opts) {
 	}
 	if byJwt != "" {
 		if err := clientauth.WriteNetworkTokenWithContext(ctx, jwtPath, byJwt); err != nil {
-			panic(err)
+			return fmt.Errorf("network token was not written: %w", err)
 		}
 		fmt.Printf("Jwt written to %s\n", jwtPath)
+		if cliIsTerminal(os.Stdout) {
+			signIn := readMinerSignIn()
+			if signIn.networkName != "" {
+				fmt.Printf("Signed in to network %q.\n", signIn.networkName)
+			}
+			fmt.Println("Next: provider start")
+		}
 	}
+	return nil
 }
 
 // Without -f, an existing jwt is replaced only when the user answers y.
@@ -474,7 +536,7 @@ func terminalLoginPrompts() loginPrompts {
 	return loginPrompts{
 		password: func() (string, error) {
 			fmt.Print("Enter password: ")
-			passwordBytes, err := term.ReadPassword(stdin)
+			passwordBytes, err := readHiddenInterruptible(stdin)
 			if err != nil {
 				return "", err
 			}
@@ -483,7 +545,7 @@ func terminalLoginPrompts() loginPrompts {
 		},
 		authCode: func() (string, error) {
 			return readAuthCode(os.Stdin, os.Stdout, term.IsTerminal(stdin), func() ([]byte, error) {
-				return term.ReadPassword(stdin)
+				return readHiddenInterruptible(stdin)
 			})
 		},
 	}
@@ -579,6 +641,23 @@ func applyProviderMemoryTarget(
 }
 
 func provide(opts docopt.Opts) {
+	provideWith(opts, false)
+}
+
+// provideWith is provide, or provider start when start is set: start asks
+// before registering a new device and, in a terminal, reports in plain lines.
+func provideWith(opts docopt.Opts, start bool) {
+	if !providePreflight(opts, start, os.Stdin, os.Stdout, os.Stderr) {
+		os.Exit(minerExitNeedsSetup)
+	}
+	var ui *startTerminalUi
+	if start && cliIsTerminal(os.Stdout) && cliIsTerminal(os.Stderr) && cliVerbosity(os.Args[1:]) == 0 && os.Getenv("PROVIDER_DEBUG") == "" {
+		ui = newStartTerminalUi(os.Stdout)
+	}
+	var out io.Writer = os.Stdout
+	if ui != nil {
+		out = ui
+	}
 	port, _ := opts.Int("--port")
 
 	apiUrl, err := resolveApiUrl(opts)
@@ -599,6 +678,9 @@ func provide(opts docopt.Opts) {
 
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer stopSignals()
+	// on Windows, the service's supervisor asks through an inherited event
+	ctx, stopService := minerServiceStopContext(ctx)
+	defer stopService()
 
 	allProxySettings := readProxySettings()
 	providerCount := len(allProxySettings)
@@ -645,7 +727,13 @@ func provide(opts docopt.Opts) {
 	// A complete-profile launch must report refusal to its supervisor, and a
 	// child that set its rejected network sign-in aside says so by its exit
 	// code. The owned run has joined every child before this exit decision.
-	err = settings.run(ctx, os.Stdout)
+	if ui != nil {
+		ui.begin()
+	}
+	err = settings.run(ctx, out)
+	if ui != nil {
+		ui.finish(err, ctx.Err() != nil)
+	}
 	if code, ok := providerRunExitCode(err); ok {
 		stopSignals()
 		os.Exit(code)
@@ -653,6 +741,11 @@ func provide(opts docopt.Opts) {
 	if err != nil && ctx.Err() == nil && (settings.requireWorkCapture || settings.workCapturePath != "" || settings.workCaptureSha256 != "" || settings.requireContractCapture || settings.contractCapturePath != "" || settings.contractCaptureSha256 != "") {
 		stopSignals()
 		fmt.Fprintln(os.Stderr, "provider original capture launch refused; restore approved profiles, retained identity and prepared custody")
+		os.Exit(1)
+	}
+	if start && err != nil && ctx.Err() == nil {
+		// provide has always exited 0 here; start tells a service it failed
+		stopSignals()
 		os.Exit(1)
 	}
 }
@@ -727,6 +820,8 @@ func (self providerRunSettings) run(parent context.Context, writer io.Writer) (r
 		return err
 	}
 	defer progress.close()
+	// provider status reads this; it stops before progress closes
+	defer startMinerStatusFile(ctx, progress)()
 	status, err := newProviderStatusServer(self.port, output, cancel, progress)
 	if err != nil {
 		output.observe(providerStatusFailed, 0, false, err, 0, nil)
@@ -848,12 +943,7 @@ func (self providerRunSettings) run(parent context.Context, writer io.Writer) (r
 		certPem, keyPem, _ := readProviderTlsCertAndKey()
 		extenderKeySeed, _ := readProviderExtenderKeySeed()
 		settings := ProviderDeviceSettings(self.closeReportDomainHash)
-		settings.KeyMaterial = sdk.NewDeviceLocalKeyMaterial(seed, certPem, keyPem)
-		// the extender identity of this provider (connect/EXTENDER.md B1, G2).
-		// The space keeps no local state, so the seed lives here: without it
-		// the role would activate under a new key every launch and the
-		// operator would revoke the old one as fast as it publishes it.
-		settings.KeyMaterial.SetExtenderKeySeed(extenderKeySeed)
+		settings.KeyMaterial = providerDeviceKeyMaterial(seed, certPem, keyPem, extenderKeySeed)
 		applyProviderMemoryTarget(settings, self.memoryPlan.DeviceMemoryTargetByteCount)
 		settings.ProviderDialContextSettings = self.testEgressDialer
 		device, err := newProviderDeviceLocal(
@@ -1040,6 +1130,29 @@ func writeProviderClientKeySeed(seed []byte) error {
 	}
 	return os.WriteFile(p, seed, 0600)
 }
+
+// providerDeviceKeyMaterial is the identity material the provider device is
+// built with. The space keeps no local state, so the extender's keys live in
+// the provider state directory and ride the key material:
+//   - the extender identity seed (connect/EXTENDER.md B1, G2): without it the
+//     role would activate under a new key every launch and the operator would
+//     revoke the old one as fast as it publishes it.
+//   - the file the lag.dev measurement key is kept in (lag.dev/PLAN.md C4),
+//     which the role creates at its first start and asks the operator to
+//     certify. Without it the role serves no measurement name, which left
+//     lag.dev with no extender to offer.
+func providerDeviceKeyMaterial(clientKeySeed []byte, certPem []byte, keyPem []byte, extenderKeySeed []byte) *sdk.DeviceLocalKeyMaterial {
+	keyMaterial := sdk.NewDeviceLocalKeyMaterial(clientKeySeed, certPem, keyPem)
+	keyMaterial.SetExtenderKeySeed(extenderKeySeed)
+	if measurementKeyFile, err := providerStatePath(providerExtenderMeasurementKeyFileName); err == nil {
+		keyMaterial.SetExtenderMeasurementKeyFile(measurementKeyFile)
+	}
+	return keyMaterial
+}
+
+// The provider state file of the extender's lag.dev measurement key: a PEM
+// private key the sdk role writes 0600 when it is absent.
+const providerExtenderMeasurementKeyFileName = ".provider.extender.measurement.key"
 
 // readProviderExtenderKeySeed loads the ed25519 seed of this provider's
 // extender identity from `~/.urnetwork/.provider.extender.key`
