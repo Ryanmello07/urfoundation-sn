@@ -1799,13 +1799,16 @@ components:
             policies accept only regular 100644 modifications with matching
             `--- a/path` and `+++ b/path` headers. When the frozen policy explicitly
             uses `path_base: mono_root_v1` and its evaluator is qualified for that
-            mode, regular text files may also be created or deleted: use exactly
-            `new file mode 100644` or `deleted file mode 100644`, `/dev/null` only
+            mode, regular 100644 or 100755 text files may be modified, created,
+            or deleted. Existing execute modes must be preserved. Creation and
+            deletion use exactly `new file mode MODE` or `deleted file mode MODE`
+            with MODE equal to 100644 or 100755, `/dev/null` only
             on the absent side, and one complete hunk with zero lines on that
             side. Standard empty-file operations may instead contain only the
-            100644 mode and an index identifying the absent object and exact
+            regular mode and an index identifying the absent object and exact
             empty SHA-1 blob (canonical abbreviation of at least seven digits).
-            Binary files, symlinks, executable or submodule modes, mode changes,
+            Trusted source application checks actual pinned Git modes even when
+            optional index modes are omitted. Binary files, symlinks, submodules, mode changes,
             renames, copies, mixed/duplicate operation metadata, and protected
             paths remain refused. Preserve the final LF when
             encoding JSON; shell command substitution commonly removes it.
