@@ -147,6 +147,34 @@ func TestProviderDeviceSettingsOptTheExtenderInToTheDnsPrivilegedPort(t *testing
 	}
 }
 
+// Only the direct provider joins the mesh and holds the provider extender
+// role. A proxy provider runs in the feed role with the role off, so a
+// thousand proxies do not run a thousand libp2p nodes under one identity, nor
+// race to bind the extender's ports.
+func TestProxyProviderStaysOutOfTheExtenderRoles(t *testing.T) {
+	if mode := providerGossipMode(nil); mode != sdk.ExtenderGossipModeAuto {
+		t.Fatalf("direct provider gossip mode = %s, expected auto", mode)
+	}
+	direct := ProviderDeviceSettings([32]byte{})
+	applyProxyProviderSettings(direct, nil)
+	if !direct.ProvideExtenderEnabled || !direct.ProvideExtenderDnsPrivilegedPort {
+		t.Fatal("the direct provider lost its extender role")
+	}
+
+	proxySettings := &connect.ProxySettings{Network: "tcp", Address: "192.0.2.1:1080"}
+	if mode := providerGossipMode(proxySettings); mode != sdk.ExtenderGossipModeFeed {
+		t.Fatalf("proxy provider gossip mode = %s, expected feed", mode)
+	}
+	proxied := ProviderDeviceSettings([32]byte{})
+	applyProxyProviderSettings(proxied, proxySettings)
+	if proxied.ProvideExtenderEnabled {
+		t.Fatal("a proxy provider can run the extender role")
+	}
+	if proxied.ProvideExtenderDnsPrivilegedPort {
+		t.Fatal("a proxy provider still binds 53")
+	}
+}
+
 // Callback state keeps closed scalar facts, including unknown versus disabled.
 // Repeated facts do not depend on arbitrary SDK error/address text.
 func TestProviderExtenderStatusLine(t *testing.T) {

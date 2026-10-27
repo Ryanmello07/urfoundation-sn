@@ -872,7 +872,7 @@ func (self providerRunSettings) run(parent context.Context, writer io.Writer) (r
 		clientStrategySettings := connect.DefaultClientStrategySettings()
 		clientStrategySettings.ProxySettings = proxySettings
 		clientStrategySettings.DialContextSettings = self.testEgressDialer
-		networkSpace := sdk.NewNetworkSpaceWithUrls(proxyCtx, self.apiUrl, self.connectUrl, clientStrategySettings)
+		networkSpace := sdk.NewNetworkSpaceWithUrlsAndGossipMode(proxyCtx, self.apiUrl, self.connectUrl, clientStrategySettings, providerGossipMode(proxySettings))
 		defer networkSpace.Close()
 		api := networkSpace.GetApi()
 		// Authentication refusal also joins the API before the shared key owner
@@ -943,6 +943,7 @@ func (self providerRunSettings) run(parent context.Context, writer io.Writer) (r
 		certPem, keyPem, _ := readProviderTlsCertAndKey()
 		extenderKeySeed, _ := readProviderExtenderKeySeed()
 		settings := ProviderDeviceSettings(self.closeReportDomainHash)
+		applyProxyProviderSettings(settings, proxySettings)
 		settings.KeyMaterial = providerDeviceKeyMaterial(seed, certPem, keyPem, extenderKeySeed)
 		applyProviderMemoryTarget(settings, self.memoryPlan.DeviceMemoryTargetByteCount)
 		settings.ProviderDialContextSettings = self.testEgressDialer
@@ -1085,6 +1086,30 @@ func providerStatePath(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, name), nil
+}
+
+// providerGossipMode is the extender gossip mode of one provider's space. A
+// proxy provider runs in the feed role: a member node per proxy would put
+// one libp2p host per proxy on the mesh, all under this provider's one
+// extender identity, and most of their dials go through the proxy.
+func providerGossipMode(proxySettings *connect.ProxySettings) string {
+	if proxySettings != nil {
+		return sdk.ExtenderGossipModeFeed
+	}
+	return sdk.ExtenderGossipModeAuto
+}
+
+// applyProxyProviderSettings keeps a proxy provider out of the provider
+// extender role. The role listens on this host's own ports under the one
+// extender identity, so only one device per host can hold it, and a proxy
+// provider's egress is not this host's (sdk DeviceLocalSettings
+// ProvideExtenderEnabled).
+func applyProxyProviderSettings(settings *sdk.DeviceLocalSettings, proxySettings *connect.ProxySettings) {
+	if proxySettings == nil {
+		return
+	}
+	settings.ProvideExtenderEnabled = false
+	settings.ProvideExtenderDnsPrivilegedPort = false
 }
 
 // providerClientJwtPath gives each independently connected proxy provider a
