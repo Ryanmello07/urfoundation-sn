@@ -1455,11 +1455,22 @@ components:
           type: string
           format: date-time
 
+    CompetitionRuntimeStatus:
+      type: object
+      additionalProperties: false
+      required: [intake_ready, grading_ready, publication_held]
+      description: Mutable infrastructure and durable-hold status; never an assertion that calibration or reviewer qualification passed. intake_ready means infrastructure eligible for admission, not that the submission window is open; clients must also check the round status and opens_at/closes_at.
+      properties:
+        intake_ready: {type: boolean}
+        grading_ready: {type: boolean}
+        publication_held: {type: boolean}
+
     CompetitionReadinessResult:
       type: object
       additionalProperties: false
       required: [ready, checks, checked_at]
       properties:
+        runtime_status: {$ref: "#/components/schemas/CompetitionRuntimeStatus"}
         ready:
           type: boolean
         checks:
@@ -1484,6 +1495,7 @@ components:
         - evaluation_policy
         - season_policy
       properties:
+        runtime_status: {$ref: "#/components/schemas/CompetitionRuntimeStatus"}
         decision_mode: {$ref: "#/components/schemas/CompetitionDecisionMode"}
         required_api_capability: {$ref: "#/components/schemas/CompetitionRequiredCapability"}
         competition_id:
