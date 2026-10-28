@@ -62,11 +62,12 @@ info:
     claims, never proof that an already transferred reward can be clawed back.
     No replacement burn formula or actual Apex money-movement API is invented here.
     Six seven-day admission windows may have arbitrarily long grading drains.
-    Prospectively adopted winner_review_policy elected_winner_snow_union_v1 makes
+    Prospectively adopted winner_review_policy elected_winner_snow_union_v2 makes
     integrity review part of automatic epoch closing, after public provisional
     election. The elected winner is reviewed serially by qwen3.8-27b,
-    gemma-4-26b-a4b and muse-glimmer-30b on the qualified Snow broker. All three
-    must approve; every member's six findings remain attributed in the union.
+    and gemma-4-26b-a4b on the qualified Snow broker. Both must approve; every
+    member's six findings remain attributed in the union. Historical v1 retains
+    its original three-member identity and eighteen findings.
     A substantiated rejection publishes reasons and re-elects from the
     original seal. Approval then gates the exact winner's isolated build and
     qualification before the successor opens. No eligible recipient means
@@ -1025,6 +1026,54 @@ components:
         - contains: {type: object, required: [model, criterion], properties: {model: {const: muse-glimmer-30b}, criterion: {const: source_safety}}}
           minContains: 1
           maxContains: 1
+    CompetitionSnowTwoMemberReviewFindings:
+      type: array
+      minItems: 12
+      maxItems: 12
+      description: Exactly six criteria for each of Qwen and Gemma under the prospective two-member policy; historical three-member reviews retain their separate schema.
+      items:
+        allOf:
+          - $ref: "#/components/schemas/CompetitionReviewFinding"
+          - required: [model]
+            properties:
+              model: {enum: [qwen3.8-27b, gemma-4-26b-a4b]}
+      allOf:
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: qwen3.8-27b}, criterion: {const: measurement_integrity}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: qwen3.8-27b}, criterion: {const: workload_generalization}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: qwen3.8-27b}, criterion: {const: containment}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: qwen3.8-27b}, criterion: {const: patch_scope}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: qwen3.8-27b}, criterion: {const: reproducibility}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: qwen3.8-27b}, criterion: {const: source_safety}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: gemma-4-26b-a4b}, criterion: {const: measurement_integrity}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: gemma-4-26b-a4b}, criterion: {const: workload_generalization}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: gemma-4-26b-a4b}, criterion: {const: containment}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: gemma-4-26b-a4b}, criterion: {const: patch_scope}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: gemma-4-26b-a4b}, criterion: {const: reproducibility}}}
+          minContains: 1
+          maxContains: 1
+        - contains: {type: object, required: [model, criterion], properties: {model: {const: gemma-4-26b-a4b}, criterion: {const: source_safety}}}
+          minContains: 1
+          maxContains: 1
     CompetitionIntegrityReviewRequest:
       type: object
       additionalProperties: false
@@ -1033,15 +1082,24 @@ components:
         - if:
             required: [reviewer_model]
             properties:
-              reviewer_model: {const: snow-qwen-gemma-muse-union}
+              reviewer_model: {enum: [snow-qwen-gemma-union, snow-qwen-gemma-muse-union]}
           then:
             required: [expected_decision_sha256, reviewer_reasoning]
             properties:
               reviewer_reasoning: {const: provider-default}
               reward_disposition: {enum: [approved, restored, disqualified]}
               source_disposition: {enum: [approved, rejected]}
-              findings: {$ref: "#/components/schemas/CompetitionSnowReviewFindings"}
             allOf:
+              - if:
+                  required: [reviewer_model]
+                  properties:
+                    reviewer_model: {const: snow-qwen-gemma-union}
+                then:
+                  properties:
+                    findings: {$ref: "#/components/schemas/CompetitionSnowTwoMemberReviewFindings"}
+                else:
+                  properties:
+                    findings: {$ref: "#/components/schemas/CompetitionSnowReviewFindings"}
               - if:
                   properties:
                     reward_disposition: {const: disqualified}
@@ -1083,7 +1141,7 @@ components:
         public_explanation: {type: string, minLength: 1, maxLength: 4096}
         withheld_evidence_explanation: {type: string, minLength: 1}
         private_evidence_sha256: {$ref: "#/components/schemas/Sha256"}
-        findings: {type: array, minItems: 6, maxItems: 18, items: {$ref: "#/components/schemas/CompetitionReviewFinding"}, description: Exactly six un-attributed legacy findings or eighteen complete Snow member/criterion pairs; total request remains bounded to 64 KiB.}
+        findings: {type: array, minItems: 6, maxItems: 18, items: {$ref: "#/components/schemas/CompetitionReviewFinding"}, description: Exactly six un-attributed legacy findings, twelve Qwen/Gemma v2 pairs, or eighteen historical three-member v1 pairs; total request remains bounded to 64 KiB.}
         supersedes_review_id: {type: string, format: uuid}
         appeal_id: {type: string}
         expected_replacement_job_id: {type: string, format: uuid}
@@ -1092,8 +1150,8 @@ components:
           description: Required by each elected-winner policy; binds the exact current reward decision and durable review window.
         reviewer_model:
           type: string
-          enum: [snow-qwen-gemma-muse-union, gpt-5.4-mini, gpt-6.1-sol]
-          description: Required broker provenance pinned by the frozen policy; the Snow identity is the three-member aggregate, never a fabricated individual model. Historical mini/xhigh and Sol/max tuples cannot be mixed or relabeled. Not independent model attestation.
+          enum: [snow-qwen-gemma-union, snow-qwen-gemma-muse-union, gpt-5.4-mini, gpt-6.1-sol]
+          description: Required broker provenance pinned by the frozen policy. New Snow v2 reviews require both Qwen and Gemma; historical v1 retains three members. These aggregates and historical mini/xhigh or Sol/max tuples cannot be mixed or relabeled. Not independent model attestation.
         reviewer_reasoning: {type: string, enum: [provider-default, xhigh, max]}
     CompetitionIntegrityReviewResult:
       type: object
@@ -1126,7 +1184,7 @@ components:
             idempotency_key: {type: string, const: ""}
             expected_revision: {type: integer}
             expected_decision_sha256: {$ref: "#/components/schemas/Sha256"}
-            reviewer_model: {type: string, enum: [snow-qwen-gemma-muse-union, gpt-5.4-mini, gpt-6.1-sol]}
+            reviewer_model: {type: string, enum: [snow-qwen-gemma-union, snow-qwen-gemma-muse-union, gpt-5.4-mini, gpt-6.1-sol]}
             reviewer_reasoning: {type: string, enum: [provider-default, xhigh, max]}
             job_id: {type: string, format: uuid}
             patch_sha256: {$ref: "#/components/schemas/Sha256"}
@@ -1278,7 +1336,7 @@ components:
         review_id: {type: string, format: uuid}
         review_decision_digest: {$ref: "#/components/schemas/Sha256"}
         reward_decision_digest: {$ref: "#/components/schemas/Sha256"}
-        winner_review_policy: {type: string, enum: [elected_winner_snow_union_v1, elected_winner_gpt54mini_xhigh_v1, elected_winner_sol61max_v1]}
+        winner_review_policy: {type: string, enum: [elected_winner_snow_union_v2, elected_winner_snow_union_v1, elected_winner_gpt54mini_xhigh_v1, elected_winner_sol61max_v1]}
         winner_review: {$ref: "#/components/schemas/CompetitionWinnerReviewCheckpoint"}
         manifest_commit: {$ref: "#/components/schemas/GitSha"}
         manifest_sha256: {$ref: "#/components/schemas/Sha256"}
@@ -1495,8 +1553,8 @@ components:
         source_activation_generation: {type: integer, minimum: 1}
         winner_review_policy:
           type: string
-          enum: [elected_winner_snow_union_v1, elected_winner_gpt54mini_xhigh_v1, elected_winner_sol61max_v1]
-          description: New seasons use the Snow three-model union. Historical mini/xhigh and Sol/max records preserve their original provenance. Absent preserves the earlier independent source-choice flow. Requires zero source-choice/preparation delays and a fresh approved frozen policy.
+          enum: [elected_winner_snow_union_v2, elected_winner_snow_union_v1, elected_winner_gpt54mini_xhigh_v1, elected_winner_sol61max_v1]
+          description: New seasons use the Snow v2 Qwen/Gemma union. Historical three-member v1, mini/xhigh and Sol/max records preserve their original provenance. Absent preserves the earlier independent source-choice flow. Requires zero source-choice/preparation delays and a fresh approved frozen policy.
         winner_review_timeout_seconds: {type: integer, minimum: 60, maximum: 86400}
     CompetitionPatchPolicy:
       type: object
