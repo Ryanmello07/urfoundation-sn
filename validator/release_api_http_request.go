@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-// Clone the concrete transport so its callback belongs to this request alone.
+// Clone a health-checking transport so its callback belongs to this request alone.
 // Go's callback names the health event but not its connection; a shared callback
 // cannot safely reclassify or cancel unrelated requests. All configured TLS,
 // proxy, protocol and timeout policy remains intact. This deliberately gives
@@ -20,7 +20,9 @@ import (
 // their own error policy and are never granted this health-event authority.
 func doReleaseApiHttpRequest(client *http.Client, request *http.Request) (*http.Response, error) {
 	transport, concrete := client.Transport.(*http.Transport)
-	if !concrete || transport == nil || transport.HTTP2 == nil {
+	// Go installs an empty Http/2 config on first use even without health
+	// checks. Keep that transport's pooling and error policy unchanged.
+	if !concrete || transport == nil || transport.HTTP2 == nil || transport.HTTP2.SendPingTimeout <= 0 {
 		return client.Do(request)
 	}
 	ownedTransport := transport.Clone()
