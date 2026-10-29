@@ -132,7 +132,7 @@ func (self *HTTPAttemptStreamV2Writer) write(ctx context.Context, kind, contentH
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	response, err := self.client.Do(request)
+	response, err := doReleaseApiHttpRequest(self.client, request)
 	if err != nil {
 		if response != nil && response.Body != nil {
 			err = errors.Join(err, response.Body.Close())
