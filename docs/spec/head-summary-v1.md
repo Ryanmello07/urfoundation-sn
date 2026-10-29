@@ -12,9 +12,9 @@ decaying values).
 
 Reference implementation: `github.com/urfoundation/sn/protocol/headsummary`
 (encode, sign, decode and verify) on top of `protocol/headscore` (the exact head
-arithmetic and order). The golden vector `protocol/testdata/head-summary-v1.json`
-lands with it. Go operators should call `headsummary.Decode` rather than
-re-implementing this document.
+arithmetic and order). The golden vector is `protocol/testdata/head-summary-v1.json`.
+Go operators should call `headsummary.Decode` rather than re-implementing this
+document.
 
 ## Envelope
 
@@ -150,8 +150,12 @@ authority.
   operator, retried only after a transport error or timeout, 408, 429 or 5xx,
   after 5 then 15 seconds (or `Retry-After`, capped at 60 seconds). Redirects
   are never followed.
-- Every failure is logged as a validator diagnostic and counted. A failed or
-  dropped summary is not retried later; the next tempo's summary supersedes it.
+- Every failure is logged as a validator diagnostic and counted:
+  `head_summary_upload_failed` and `head_summary_dropped` in the `operator`
+  domain with the operator id, and `head_summary_build_failed` in `steering`;
+  a delivery is `head_summary_uploaded`. A failed or dropped summary is not
+  retried later; the next tempo's summary supersedes it. A summary queued at a
+  restart is lost the same way.
 - The upload is on by default whenever the validator runs; there is no switch.
 
 ## Operator behavior
