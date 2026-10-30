@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"time"
 
@@ -106,11 +107,21 @@ func providerAuthenticationRecoveryEvent(err error) providerDiagnosticEvent {
 	return providerStartupRecoveryRequired
 }
 
+// The wait after an unavailable attempt doubles from one second to a minute,
+// and each wait is drawn from its upper half. Proxy providers often share one
+// proxy gateway, which refuses a burst: a thousand workers retrying every
+// second kept about 860 sign-ins in flight through it, and only about 13 a
+// minute got through. Growing, spread-out waits let the gateway drain.
+func providerAuthenticationRetryDelay(retries int) time.Duration {
+	ceiling := min(time.Second<<min(retries, 6), time.Minute)
+	return ceiling/2 + rand.N(ceiling/2+1)
+}
+
 // Each attempt is finite. Later attempts replay the same durably retained
 // operation and never fall back to the legacy allocating endpoint.
 func authenticateProvider(ctx context.Context, api *sdk.Api, networkPath, clientPath string, keyOwner *clientauth.ProviderClientKeyOwner, slot string, allowCreate bool, output *providerDiagnostics, index uint64) (string, connect.Id, error) {
 	hooks, _ := ctx.Value(providerRegistrationHooksKey{}).(providerRegistrationHooks)
-	for {
+	for retries := 0; ; retries++ {
 		attempt, cancel := context.WithTimeout(ctx, 300*time.Second)
 		token, id, err := keyOwner.LoadOrRegisterClientJwt(attempt, api, networkPath, clientPath, slot, allowCreate)
 		cancel()
@@ -136,11 +147,12 @@ func authenticateProvider(ctx context.Context, api *sdk.Api, networkPath, client
 		if !providerRegistrationRetryable(err, 0) {
 			return "", connect.Id{}, fmt.Errorf("provider client identity requires recovery: %w", err)
 		}
-		output.observe(providerAuthenticationWait, index, true, err, time.Second, nil)
+		delay := providerAuthenticationRetryDelay(retries)
+		output.observe(providerAuthenticationWait, index, true, err, delay, nil)
 		select {
 		case <-ctx.Done():
 			return "", connect.Id{}, errors.Join(err, ctx.Err())
-		case <-time.After(time.Second):
+		case <-time.After(delay):
 		}
 	}
 }

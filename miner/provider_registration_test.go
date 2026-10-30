@@ -915,3 +915,24 @@ func TestProviderRegistrationCallbacksRetainPhysicalCustody(t *testing.T) {
 		}
 	}
 }
+
+// The authentication wait grows from about a second to at most a minute and
+// is spread over the upper half of each step.
+func TestProviderAuthenticationRetryDelayGrowsWithJitter(t *testing.T) {
+	for retries, ceiling := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, time.Minute, time.Minute} {
+		lowest, highest := time.Duration(1<<62), time.Duration(0)
+		for range 200 {
+			delay := providerAuthenticationRetryDelay(retries)
+			if delay < ceiling/2 || ceiling < delay {
+				t.Fatalf("retry %d waited %s, want within [%s, %s]", retries, delay, ceiling/2, ceiling)
+			}
+			lowest, highest = min(lowest, delay), max(highest, delay)
+		}
+		if highest-lowest < ceiling/8 {
+			t.Fatalf("retry %d waits spread only %s", retries, highest-lowest)
+		}
+	}
+	if delay := providerAuthenticationRetryDelay(1 << 20); time.Minute < delay {
+		t.Fatalf("a long retry run waited %s", delay)
+	}
+}
