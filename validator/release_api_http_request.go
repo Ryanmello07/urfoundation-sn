@@ -18,8 +18,13 @@ import (
 // proxy, protocol and timeout policy remains intact. This deliberately gives
 // up connection reuse for these bounded API operations. Custom transports keep
 // their own error policy and are never granted this health-event authority.
-func doReleaseApiHttpRequest(client *http.Client, request *http.Request) (*http.Response, error) {
+func doReleaseApiHttpRequest(client *http.Client, request *http.Request) (resultResponse *http.Response, resultErr error) {
 	transport, concrete := client.Transport.(*http.Transport)
+	var diagnostic *releasePreparationDiagnostic
+	if request != nil {
+		diagnostic = newReleasePreparationHttpDiagnostic(request.Context(), releasePreparationHttpOpen)
+	}
+	defer func() { diagnostic.finish(resultErr) }()
 	// Go installs an empty Http/2 config on first use even without health
 	// checks. Keep that transport's pooling and error policy unchanged.
 	if !concrete || transport == nil || transport.HTTP2 == nil || transport.HTTP2.SendPingTimeout <= 0 {
@@ -74,7 +79,8 @@ func doReleaseApiHttpRequest(client *http.Client, request *http.Request) (*http.
 		release()
 		return response, nil
 	}
-	response.Body = &releaseApiHttpResponseBody{ReadCloser: response.Body, parent: parent, operation: operation, lostPing: lostPing, release: release}
+	response.Body = &releaseApiHttpResponseBody{ReadCloser: response.Body, parent: parent, operation: operation, lostPing: lostPing, release: release,
+		diagnosticRead: newReleasePreparationHttpDiagnostic(operation, releasePreparationHttpRead)}
 	return response, nil
 }
 
@@ -83,12 +89,13 @@ func doReleaseApiHttpRequest(client *http.Client, request *http.Request) (*http.
 // errors retain their independent verdict and Close retires the transport.
 type releaseApiHttpResponseBody struct {
 	io.ReadCloser
-	parent    context.Context
-	operation context.Context
-	lostPing  *net.OpError
-	release   func()
-	closeOnce sync.Once
-	closeErr  error
+	parent         context.Context
+	operation      context.Context
+	lostPing       *net.OpError
+	release        func()
+	closeOnce      sync.Once
+	closeErr       error
+	diagnosticRead *releasePreparationDiagnostic
 }
 
 // Preserve independent body errors while identifying this owner's cancellation.
@@ -97,13 +104,18 @@ func (self *releaseApiHttpResponseBody) Read(value []byte) (int, error) {
 	if err == context.Canceled && context.Cause(self.operation) == self.lostPing && self.parent.Err() == nil {
 		err = self.lostPing
 	}
+	if err != io.EOF {
+		self.diagnosticRead.finish(err)
+	}
 	return count, err
 }
 
 // Retire the private transport once, retaining the physical Close verdict.
 func (self *releaseApiHttpResponseBody) Close() error {
 	self.closeOnce.Do(func() {
+		diagnostic := newReleasePreparationHttpDiagnostic(self.operation, releasePreparationHttpClose)
 		self.closeErr = self.ReadCloser.Close()
+		diagnostic.finish(self.closeErr)
 		self.release()
 	})
 	return self.closeErr
