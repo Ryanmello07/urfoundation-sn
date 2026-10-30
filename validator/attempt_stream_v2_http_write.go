@@ -113,6 +113,8 @@ func (self *HTTPAttemptStreamV2Writer) write(ctx context.Context, kind, contentH
 	endpoint.RawQuery = url.Values{"kind": {kind}, "hash": {contentHash}}.Encode()
 	requestCtx, cancel := context.WithTimeout(ctx, attemptStreamV2HttpWriteIoTimeout)
 	defer cancel()
+	diagnostic := newReleasePreparationHttpDiagnostic(requestCtx, releasePreparationHttpWrite)
+	defer func() { diagnostic.finish(resultErr) }()
 	// Observe expiry after the body closes and before our own cancellation.
 	defer func() { resultErr = errors.Join(resultErr, requestCtx.Err()) }()
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint.String(), bytes.NewReader(owned))
