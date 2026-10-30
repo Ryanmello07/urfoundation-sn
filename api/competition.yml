@@ -8,11 +8,33 @@ info:
     connect/api/bringyour.yml. Competition paths are namespaced under
     /competition.
 
-    V1 behavior remains unchanged. Round workload seeds and score results are never returned while a round is
-    active or grading. The API publishes a seed commitment and the generated
+    Public round workload seeds, scores, leaderboards and winners remain sealed
+    while a round is active or grading. The API publishes a seed commitment and the generated
     providers.yml SHA-256 until every admitted job is terminal and the winner
     is finalized (after ordered honesty review in production), then exposes
     the seed, immutable workload, and results.
+    As an additive private polling disclosure, the owning submitter credential
+    can immediately read its completed production score, known gate numeric/bool
+    reasons, and significance statistics through its immutable status_url.
+    state=completed is not publication, a winner decision, review approval, or
+    payment. Full evaluator errors and arbitrary diagnostic evidence remain
+    embargoed. This feedback applies to existing production rounds without
+    rewriting their frozen evaluator, scoring policy, source/OpenAPI evidence,
+    or public decision-mode contract. Staging publication rules are unchanged.
+    Ownership is credential-owner scope, not individual-miner scope: a shared
+    Apex/Macrocosmos credential can poll all jobs associated with that credential.
+    Apex must authenticate each miner and map job_id/submission_id feedback only
+    to that miner; job IDs are not authorization secrets. The reference adapter's
+    local record keeps private_score separate from public score/published/winner.
+    Its bounded refresh lane automatically fetches feedback for pre-upgrade
+    completed records and probes ambiguous completed cache-hit admissions.
+    Missing status is not success; known failed/canceled jobs are not refreshed.
+    The lane alternates with ordinary FIFO polling and backs off old replicas
+    that still omit private feedback. Feedback stops routine per-job polling;
+    only existing public result reconciliation can establish winner/reward state.
+    Update Apex consumers before rollout: old consumers may reject production
+    score feedback, and old adapter binaries cannot read newly persisted
+    private_score/refresh fields. Do not roll an old binary back onto new state.
     Identical canonical patch bytes in one round map to one durable job/result.
     Before production epoch one, an operator may run an independently numbered
     staging era beginning at epoch zero. Staging submissions are fee-free but
@@ -415,7 +437,15 @@ paths:
       operationId: CompetitionGetScore
       tags: [Competition]
       summary: Poll one cached score job
-      description: Legacy v1 polling only. An owned v2 job returns 409 unsupported_decision_mode; follow the status_url returned by v2 admission instead.
+      description: |
+        Legacy v1 polling only. An owned v2 job returns 409
+        unsupported_decision_mode; follow the status_url returned by v2 admission.
+        The owning submitter credential can read its completed production score
+        privately before public finalization. Legacy operators retain inspection
+        authority. Other submitters, anonymous readers and control-plane roles
+        cannot read the job. Ownership is per credential, not per miner behind a
+        shared credential; Apex must enforce its own miner-to-submission mapping.
+        Responses, including failures, use Cache-Control no-store.
       parameters:
         - name: jobId
           in: path
@@ -425,7 +455,7 @@ paths:
             format: uuid
       responses:
         "200":
-          description: Current durable processing state. evaluation_status exposes only the evaluator lifecycle and a sanitized terminal failure code; score, gates, diagnostics, and full eval_error remain embargoed until epoch finalization (after honesty review in production, automatic after close and drain in staging).
+          description: Current durable processing state and private completed production feedback. Before publication state remains completed; score includes known numeric/bool gate reasons and safe summary/replicate statistics, never arbitrary strings, paths, seeds, logs, identities or review decisions. Full eval_error remains embargoed. Staging outcomes remain sealed until close, drain and finalization.
           content:
             application/json:
               schema:
@@ -508,14 +538,23 @@ paths:
       summary: Poll an owned immutable v2 job
       description: |
         Submitter ownership is required even after publication. Before close,
-        drain and reveal, completed outcomes remain state=completed; the typed
-        evaluation_status and message-free evaluation_failure preserve safe
-        transport diagnostics without exposing scores or private error text.
+        drain and reveal, completed production outcomes remain state=completed
+        but include a reviewed private score with numeric/bool gate reasons,
+        significance and safe numeric summaries. Public holds retain that same
+        sanitized owner projection, never full published evidence. Typed
+        evaluation_failure exposes only reviewed message-free failure codes;
+        full error text, arbitrary diagnostics and review decisions stay sealed.
+        This additive feedback does not amend the round's frozen evaluator,
+        scoring policy, source/OpenAPI evidence or public decision contract.
+        Anonymous readers, other credential owners and control-plane/operator
+        roles are denied. Apex must map a shared credential's feedback to the
+        authenticated individual miner. All responses use Cache-Control no-store.
+        Staging outcomes still wait for close, drain, seal and reveal.
       parameters:
         - {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
       responses:
         "200":
-          description: Safe job state or published immutable score.
+          description: Safe job state, private completed production feedback, or the published immutable score.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/CompetitionScoreJobResult"}
@@ -720,7 +759,7 @@ paths:
       operationId: CompetitionV2Hold
       tags: [Competition operator]
       summary: Pause or resume one separately authorized capability
-      description: Scheduler controls admission/evaluation, source_promoter controls source_activation, and settlement controls reward_delivery. Release requires RECOVERY_APPROVED. No hold discards accepted work or rewrites history.
+      description: Scheduler controls admission/evaluation, source_promoter controls source_activation, and settlement controls reward_delivery. Release requires RECOVERY_APPROVED. CALIBRATION_MAINTENANCE is valid only for an active evaluation hold; the reason alone never grants intake authority or waives host readiness. No hold discards accepted work or rewrites history.
       requestBody:
         required: true
         content:
@@ -1397,7 +1436,7 @@ components:
         active: {type: boolean}
         expected_revision: {type: integer, minimum: 0}
         idempotency_key: {type: string, minLength: 1, maxLength: 128}
-        reason_code: {type: string, enum: [OPERATOR_HOLD, EVALUATION_INTEGRITY_INCIDENT, SOURCE_COMPROMISE, RECOVERY_APPROVED]}
+        reason_code: {type: string, enum: [OPERATOR_HOLD, EVALUATION_INTEGRITY_INCIDENT, SOURCE_COMPROMISE, RECOVERY_APPROVED, CALIBRATION_MAINTENANCE], description: CALIBRATION_MAINTENANCE requires kind evaluation and active true. Only a separately pinned bounded scope may preserve intake during maintenance; it does not assert host readiness or release grading/publication.}
         public_explanation: {type: string, minLength: 1, maxLength: 4096}
         evidence_sha256: {$ref: "#/components/schemas/Sha256"}
     CompetitionAutomationHold:
@@ -1484,6 +1523,18 @@ components:
     CompetitionInfoResult:
       type: object
       additionalProperties: false
+      allOf:
+        - if:
+            required: [evaluation_policy]
+            properties:
+              evaluation_policy:
+                required: [g2_volume_policy]
+          then:
+            properties:
+              scorer_version: {const: sim-latency-score/2}
+          else:
+            properties:
+              scorer_version: {const: sim-latency-score/1}
       required:
         - competition_id
         - enabled
@@ -1508,7 +1559,8 @@ components:
           const: 1
         scorer_version:
           type: string
-          const: sim-latency-score/1
+          enum: [sim-latency-score/1, sim-latency-score/2]
+          description: Frozen implementation version. Omitted evaluation_policy.g2_volume_policy requires scorer/1; explicit minimum-work/1 requires scorer/2. The score document schema remains 1.
         base_sha:
           $ref: "#/components/schemas/GitSha"
         evaluator_image_digest:
@@ -1612,6 +1664,7 @@ components:
     CompetitionEvaluationPolicy:
       type: object
       additionalProperties: false
+      description: Frozen for each round. Current production epoch one and historical policies omit g2_volume_policy and retain both inclusive 95–105% workload bands. The approved production epoch-two transition and later rounds explicitly select minimum-work/1; no current round or historical result is rejudged.
       required:
         - hardware_id
         - host_qualification_sha256
@@ -1642,6 +1695,10 @@ components:
         - queue_limit
         - score_timeout_seconds
       properties:
+        g2_volume_policy:
+          type: string
+          enum: [minimum-work/1]
+          description: Optional versioned G2 contract. Omission means scorer/1 and inclusive 95–105% request-count and received-byte median bands. minimum-work/1 means scorer/2 and candidate median requests and received bytes each at least 95% of the corresponding baseline median, inclusively, with neither upper bound. All other gates, significance, takeover margin, R=9 and the 10800-second submission budget remain unchanged.
         hardware_id:
           type: string
           minLength: 1
@@ -2084,22 +2141,24 @@ components:
           $ref: "#/components/schemas/ImageDigest"
           description: Exact main worker container content identity for the current or terminal attempt; control-plane provenance, not a scoring input.
         score:
+          description: Completed production scores are available privately to the owning credential before public release while state remains completed. The projection keeps the typed score/significance, only G1_success/G2_volume/G3_path_integrity/G4_matchmaking/G5_stability/G6_resources identifiers and reviewed numeric/bool gate details, plus known numeric baseline/candidate/replicate summaries. Unknown keys, all free-form diagnostic strings, evaluation IDs, findings, secrets and review decisions are omitted. Full published/staging documents retain their existing publication gates; private feedback is not a winner or approval.
           oneOf:
             - $ref: "#/components/schemas/CompetitionScoreResult"
             - type: "null"
         eval_error:
+          description: Full errors remain embargoed until the existing publication gate, except authorized legacy operator inspection. Before then only reviewed message-free evaluation_failure is available.
           oneOf:
             - $ref: "#/components/schemas/CompetitionError"
             - type: "null"
 
     CompetitionJobState:
       type: string
-      description: completed is the outcome-neutral state returned during the result embargo.
+      description: completed is the legacy completion marker before public publication; it may carry private owner score feedback and must never be interpreted as publication or winner approval.
       enum: [queued, running, completed, succeeded, failed, canceled]
 
     CompetitionEvaluationStatus:
       type: string
-      description: Additive polling lifecycle. completed means evaluation produced a score but reveals no score value, placeability, gate, significance, or diagnostic; failed is terminal and is visible during the result embargo. Legacy servers may omit this field during a rolling deployment, in which case clients can derive queued/running/canceled directly from state but must treat state completed as outcome-neutral.
+      description: Additive polling lifecycle. completed means evaluation produced a score; authorized production owners may also receive reviewed private feedback without public publication. failed is terminal and visible through a reviewed message-free failure code before release. Older servers may omit this field or private score feedback during a rolling deployment; clients can derive queued/running/canceled from state but must not infer a score, failure or publication from legacy state completed alone.
       enum: [queued, running, completed, failed, canceled]
 
     CompetitionEvaluationFailure:
@@ -2127,11 +2186,11 @@ components:
           type: integer
           const: 1
         raw_score:
-          description: Absolute candidate median of replicate p95 request latency in milliseconds; lower is better and this is the ranking key. Present only after atomic epoch finalization (after honesty review in production, automatic in staging).
+          description: Absolute candidate median of replicate p95 request latency in milliseconds; lower is better and this is the ranking key. Available in private completed production owner feedback; public results and staging retain their existing atomic publication gate.
           type: number
           exclusiveMinimum: 0
         normalized_score:
-          description: Display-only ratio derived from the epoch's shared control; it is never a ranking input. Present only after atomic epoch finalization (after honesty review in production, automatic in staging).
+          description: Display-only ratio derived from the epoch's shared control; never a ranking input. Available in private completed production owner feedback without publishing the round; staging retains its existing publication gate.
           type: number
           minimum: 1
           maximum: 200
@@ -2148,6 +2207,7 @@ components:
           $ref: "#/components/schemas/CompetitionScoreSignificance"
         diagnostics:
           type: object
+          description: Private pre-publication owner feedback includes only reviewed numeric/bool fields and numeric baseline/candidate/replicate summaries. No free-form strings, artifact identities, evaluation IDs or findings. Publicly released documents retain their historical diagnostics contract.
           additionalProperties: true
 
     CompetitionScoreSignificance:
