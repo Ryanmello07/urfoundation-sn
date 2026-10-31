@@ -252,6 +252,15 @@ All of this is from read-only EXPLAINs and stats on main.
 
 ## Status
 
-- **Server branch:** `fix/st-census-speed` (e173a4ae0, 00ca2a97e) is pushed,
-  merges cleanly into main, and is not merged or deployed.
+- **Merged to server main 2026-10-31:**
+  - 6a523f17d: the core fix (e173a4ae0 on the branch);
+  - 7720f0deb: parallel decode (00ca2a97e on the branch).
+
+  Both are rebased onto f45365d84 with no change to the tested files. The model
+  suite passed again on gate containers (832 s).
+- **Deployment:** it ships in the owner-approved cohort-rotation release, run
+  by the play-webhook-monitoring-fix session: migrate 902, then api, then alt,
+  then a taskworker built from main at 7720f0deb or later. The fix is live once
+  that taskworker is deployed, which must happen before 2026-11-06 about 18:00Z.
+- **On 11-06:** watch the epoch-4 read (log line, duration, horizon age).
 - **This document:** in sn main.
