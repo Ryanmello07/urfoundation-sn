@@ -123,7 +123,9 @@ func authenticateProvider(ctx context.Context, api *sdk.Api, networkPath, client
 	hooks, _ := ctx.Value(providerRegistrationHooksKey{}).(providerRegistrationHooks)
 	for retries := 0; ; retries++ {
 		attempt, cancel := context.WithTimeout(ctx, 300*time.Second)
+		started := time.Now()
 		token, id, err := keyOwner.LoadOrRegisterClientJwt(attempt, api, networkPath, clientPath, slot, allowCreate)
+		elapsed := time.Since(started)
 		cancel()
 		if hooks.afterAttempt != nil {
 			if hookErr := hooks.afterAttempt(err); hookErr != nil {
@@ -148,6 +150,9 @@ func authenticateProvider(ctx context.Context, api *sdk.Api, networkPath, client
 			return "", connect.Id{}, fmt.Errorf("provider client identity requires recovery: %w", err)
 		}
 		delay := providerAuthenticationRetryDelay(retries)
+		if providerRetryCauseEnabled() {
+			logProviderRetryCause(index, retries, elapsed, delay, err)
+		}
 		output.observe(providerAuthenticationWait, index, true, err, delay, nil)
 		select {
 		case <-ctx.Done():
