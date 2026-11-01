@@ -945,7 +945,7 @@ func (self providerRunSettings) run(parent context.Context, writer io.Writer) (r
 		certPem, keyPem, _ := readProviderTlsCertAndKey()
 		extenderKeySeed, _ := readProviderExtenderKeySeed()
 		settings := ProviderDeviceSettings(self.closeReportDomainHash)
-		applyProxyProviderSettings(settings, proxySettings)
+		applyProxyProviderSettings(settings, proxySettings, index)
 		settings.KeyMaterial = providerDeviceKeyMaterial(seed, certPem, keyPem, extenderKeySeed)
 		applyProviderMemoryTarget(settings, self.memoryPlan.DeviceMemoryTargetByteCount)
 		settings.ProviderDialContextSettings = self.testEgressDialer
@@ -1101,13 +1101,16 @@ func providerGossipMode(proxySettings *connect.ProxySettings) string {
 	return sdk.ExtenderGossipModeAuto
 }
 
-// applyProxyProviderSettings keeps a proxy provider out of the provider
-// extender role. The role listens on this host's own ports under the one
-// extender identity, so only one device per host can hold it, and a proxy
-// provider's egress is not this host's (sdk DeviceLocalSettings
+// applyProxyProviderSettings keeps all but the first proxy provider out of
+// the provider extender role. The role listens on this host's own ports
+// under the one extender identity and serves from this host's own address
+// (it dials directly, not through the proxy), so only one device per host
+// can hold it. With proxies configured no direct provider runs, so the first
+// proxy provider holds it, and the host still offers an extender without the
+// others racing to bind its ports (sdk DeviceLocalSettings
 // ProvideExtenderEnabled).
-func applyProxyProviderSettings(settings *sdk.DeviceLocalSettings, proxySettings *connect.ProxySettings) {
-	if proxySettings == nil {
+func applyProxyProviderSettings(settings *sdk.DeviceLocalSettings, proxySettings *connect.ProxySettings, index uint64) {
+	if proxySettings == nil || index == 0 {
 		return
 	}
 	settings.ProvideExtenderEnabled = false

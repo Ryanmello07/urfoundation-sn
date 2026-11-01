@@ -147,16 +147,17 @@ func TestProviderDeviceSettingsOptTheExtenderInToTheDnsPrivilegedPort(t *testing
 	}
 }
 
-// Only the direct provider joins the mesh and holds the provider extender
-// role. A proxy provider runs in the feed role with the role off, so a
-// thousand proxies do not run a thousand libp2p nodes under one identity, nor
-// race to bind the extender's ports.
+// Only the direct provider joins the mesh. A proxy provider runs in the feed
+// role, so a thousand proxies do not run a thousand libp2p nodes under one
+// identity. Of the proxy providers only the first holds the provider extender
+// role, which serves from this host, so the host still offers an extender and
+// the others do not race to bind its ports.
 func TestProxyProviderStaysOutOfTheExtenderRoles(t *testing.T) {
 	if mode := providerGossipMode(nil); mode != sdk.ExtenderGossipModeAuto {
 		t.Fatalf("direct provider gossip mode = %s, expected auto", mode)
 	}
 	direct := ProviderDeviceSettings([32]byte{})
-	applyProxyProviderSettings(direct, nil)
+	applyProxyProviderSettings(direct, nil, 0)
 	if !direct.ProvideExtenderEnabled || !direct.ProvideExtenderDnsPrivilegedPort {
 		t.Fatal("the direct provider lost its extender role")
 	}
@@ -165,13 +166,20 @@ func TestProxyProviderStaysOutOfTheExtenderRoles(t *testing.T) {
 	if mode := providerGossipMode(proxySettings); mode != sdk.ExtenderGossipModeFeed {
 		t.Fatalf("proxy provider gossip mode = %s, expected feed", mode)
 	}
-	proxied := ProviderDeviceSettings([32]byte{})
-	applyProxyProviderSettings(proxied, proxySettings)
-	if proxied.ProvideExtenderEnabled {
-		t.Fatal("a proxy provider can run the extender role")
+	first := ProviderDeviceSettings([32]byte{})
+	applyProxyProviderSettings(first, proxySettings, 0)
+	if !first.ProvideExtenderEnabled || !first.ProvideExtenderDnsPrivilegedPort {
+		t.Fatal("the first proxy provider lost the host's extender role")
 	}
-	if proxied.ProvideExtenderDnsPrivilegedPort {
-		t.Fatal("a proxy provider still binds 53")
+	for _, index := range []uint64{1, 999} {
+		proxied := ProviderDeviceSettings([32]byte{})
+		applyProxyProviderSettings(proxied, proxySettings, index)
+		if proxied.ProvideExtenderEnabled {
+			t.Fatalf("proxy provider %d can run the extender role", index)
+		}
+		if proxied.ProvideExtenderDnsPrivilegedPort {
+			t.Fatalf("proxy provider %d still binds 53", index)
+		}
 	}
 }
 
