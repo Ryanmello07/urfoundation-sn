@@ -778,7 +778,7 @@ func (self providerRunSettings) run(parent context.Context, writer io.Writer) (r
 	if len(providers) == 0 {
 		providers = []*connect.ProxySettings{nil}
 	} else {
-		ctx = context.WithValue(ctx, providerProxyCountKey{}, len(providers))
+		ctx = context.WithValue(ctx, proxyRefusalNoticeKey{}, newProxyRefusalNotice(os.Stderr, len(providers)))
 	}
 	workProfile, err := ReadProviderWorkCaptureProfile(ctx, self.workCapturePath, self.workCaptureSha256, self.requireWorkCapture)
 	if err != nil {

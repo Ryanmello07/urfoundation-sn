@@ -7,6 +7,7 @@
 package miner
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sync"
@@ -19,22 +20,34 @@ import (
 // refusals continue, so a long log still shows why providers are waiting.
 const proxyRefusalNoticeInterval = 10 * time.Minute
 
+// One run's notice: the run's proxy count, where the notice goes, and when
+// it last showed. A run without proxies has none.
 type proxyRefusalNotice struct {
+	out        io.Writer
+	proxyCount int
+	now        func() time.Time
+
 	mutex sync.Mutex
 	last  time.Time
-	now   func() time.Time
 }
 
-var providerProxyRefusalNotice = &proxyRefusalNotice{now: time.Now}
+func newProxyRefusalNotice(out io.Writer, proxyCount int) *proxyRefusalNotice {
+	return &proxyRefusalNotice{out: out, proxyCount: proxyCount, now: time.Now}
+}
 
-// providerProxyCountKey carries the number of configured proxies of one
-// provider run, present only when the run uses proxies.
-type providerProxyCountKey struct{}
+// The run's notice reaches its sign-in workers the way the registration
+// hooks do: through the run's own context, never package state.
+type proxyRefusalNoticeKey struct{}
+
+func proxyRefusalNoticeFrom(ctx context.Context) *proxyRefusalNotice {
+	notice, _ := ctx.Value(proxyRefusalNoticeKey{}).(*proxyRefusalNotice)
+	return notice
+}
 
 // show prints the notice when err holds a proxy refusal and the last notice
 // is older than the interval. It reports whether it printed.
-func (self *proxyRefusalNotice) show(out io.Writer, err error, proxyCount int) bool {
-	if out == nil || !proxyRefused(err, 0) {
+func (self *proxyRefusalNotice) show(err error) bool {
+	if self == nil || self.out == nil || !proxyRefused(err, 0) {
 		return false
 	}
 	self.mutex.Lock()
@@ -45,9 +58,9 @@ func (self *proxyRefusalNotice) show(out io.Writer, err error, proxyCount int) b
 	}
 	self.last = now
 	self.mutex.Unlock()
-	fmt.Fprintf(out, "Some proxy providers are waiting: the proxy refused new connections (%d proxies configured).\n"+
+	fmt.Fprintf(self.out, "Some proxy providers are waiting: the proxy refused new connections (%d proxies configured).\n"+
 		"Many proxy plans limit how many connections one account can keep open at once, and refuse the rest, sometimes as \"no acceptable authentication methods\" even when the login is right. Each provider keeps about one connection open.\n"+
-		"If only some providers sign in, configure fewer proxies per account, or spread them over more accounts. The waiting providers keep retrying.\n", proxyCount)
+		"If only some providers sign in, configure fewer proxies per account, or spread them over more accounts. The waiting providers keep retrying.\n", self.proxyCount)
 	return true
 }
 

@@ -46,22 +46,39 @@ func TestProxyRefusalNoticeShowsOncePerInterval(t *testing.T) {
 	refusal := proxyRefusalForTest(t)
 	nested := errors.Join(fmt.Errorf("attempt: %w", refusal), context.DeadlineExceeded)
 	clock := time.Unix(1000, 0)
-	notice := &proxyRefusalNotice{now: func() time.Time { return clock }}
 	var out bytes.Buffer
-	if notice.show(&out, context.DeadlineExceeded, 30) {
+	notice := newProxyRefusalNotice(&out, 30)
+	notice.now = func() time.Time { return clock }
+	if notice.show(context.DeadlineExceeded) {
 		t.Fatal("notice shown for a plain timeout")
 	}
-	if !notice.show(&out, nested, 30) {
+	if !notice.show(nested) {
 		t.Fatal("notice not shown for a nested refusal")
 	}
 	if !strings.Contains(out.String(), "30 proxies configured") || !strings.Contains(out.String(), "fewer proxies per account") {
 		t.Fatalf("notice text %q", out.String())
 	}
-	if notice.show(&out, nested, 30) {
+	if notice.show(nested) {
 		t.Fatal("notice repeated within its interval")
 	}
 	clock = clock.Add(proxyRefusalNoticeInterval)
-	if !notice.show(&out, nested, 30) {
+	if !notice.show(nested) {
 		t.Fatal("notice not repeated after its interval")
+	}
+}
+
+// A direct run carries no notice, so its sign-in retries print nothing; a
+// proxy run's notice is the one its context carries.
+func TestProxyRefusalNoticeOnlyInProxyRuns(t *testing.T) {
+	refusal := proxyRefusalForTest(t)
+	direct := context.Background()
+	if notice := proxyRefusalNoticeFrom(direct); notice != nil || notice.show(refusal) {
+		t.Fatal("a direct run has a proxy refusal notice")
+	}
+	var out bytes.Buffer
+	notice := newProxyRefusalNotice(&out, 2)
+	proxied := context.WithValue(direct, proxyRefusalNoticeKey{}, notice)
+	if proxyRefusalNoticeFrom(proxied) != notice || !proxyRefusalNoticeFrom(proxied).show(refusal) {
+		t.Fatal("a proxy run's notice did not show")
 	}
 }
