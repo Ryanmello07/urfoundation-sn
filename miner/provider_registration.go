@@ -148,6 +148,9 @@ func authenticateProvider(ctx context.Context, api *sdk.Api, networkPath, client
 			return "", connect.Id{}, fmt.Errorf("provider client identity requires recovery: %w", err)
 		}
 		delay := providerAuthenticationRetryDelay(retries)
+		if proxies, ok := ctx.Value(providerProxyCountKey{}).(int); ok {
+			providerProxyRefusalNotice.show(os.Stderr, err, proxies)
+		}
 		output.observe(providerAuthenticationWait, index, true, err, delay, nil)
 		select {
 		case <-ctx.Done():
